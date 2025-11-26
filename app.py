@@ -108,7 +108,7 @@ def get_cities_keyboard():
 
 @app.route('/')
 def home():
-    return "✅ Бот куратор ВСП работает! Используйте /start в Telegram"
+    return "✅ Бот Адреса КИЦ работает! Используйте /start в Telegram"
 
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook():
