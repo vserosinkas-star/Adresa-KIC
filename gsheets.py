@@ -8,42 +8,52 @@ from google.oauth2.service_account import Credentials
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Mock данные для fallback
+# Mock данные для fallback под новую структуру
 MOCK_DATA = {
-    "8369/067": {
-        "vsp": "8369/067", 
+    "KIC001": {
+        "kic": "KIC001",
+        "city": "Аксарка",
+        "city_type": "село", 
+        "address": "ул. Центральная, 15",
         "fio": "Гранкина Елена Михайловна",
-        "contact": "8-5459-10-10",
-        "mobile": "8-909-198-88-42",
-        "city": "Аксарка"
+        "phone": "8-909-198-88-42",
+        "email": "grankina@example.com"
     },
-    "8369/068": {
-        "vsp": "8369/068",
+    "KIC002": {
+        "kic": "KIC002", 
+        "city": "Белоярск",
+        "city_type": "город",
+        "address": "ул. Ленина, 25",
+        "fio": "Гранкина Елена Михайловна",
+        "phone": "8-909-198-88-42",
+        "email": "grankina@example.com"
+    },
+    "KIC003": {
+        "kic": "KIC003",
+        "city": "Салехард", 
+        "city_type": "город",
+        "address": "ул. Республики, 42",
+        "fio": "Гранкина Елена Михайловна",
+        "phone": "8-909-198-88-42",
+        "email": "grankina@example.com"
+    },
+    "KIC004": {
+        "kic": "KIC004",
+        "city": "Лабытнанги",
+        "city_type": "город",
+        "address": "ул. Первомайская, 10",
         "fio": "Гранкина Елена Михайловна", 
-        "contact": "8-5459-10-10",
-        "mobile": "8-909-198-88-42",
-        "city": "Белоярск"
+        "phone": "8-909-198-88-42",
+        "email": "grankina@example.com"
     },
-    "8369/069": {
-        "vsp": "8369/069",
+    "KIC005": {
+        "kic": "KIC005",
+        "city": "Харп",
+        "city_type": "поселок",
+        "address": "ул. Школьная, 5",
         "fio": "Гранкина Елена Михайловна",
-        "contact": "8-5459-10-10",
-        "mobile": "8-909-198-88-42",
-        "city": "Салехард"
-    },
-    "8369/070": {
-        "vsp": "8369/070",
-        "fio": "Гранкина Елена Михайловна",
-        "contact": "8-5459-10-10",
-        "mobile": "8-909-198-88-42",
-        "city": "Лабытнанги"
-    },
-    "8369/071": {
-        "vsp": "8369/071",
-        "fio": "Гранкина Елена Михайловна",
-        "contact": "8-5459-10-10",
-        "mobile": "8-909-198-88-42",
-        "city": "Харп"
+        "phone": "8-909-198-88-42",
+        "email": "grankina@example.com"
     }
 }
 
@@ -71,7 +81,7 @@ def init_gsheets():
         return None
 
 def load_data_from_sheets():
-    """Улучшенная загрузка данных с обработкой разных форматов"""
+    """Загрузка данных из Google Sheets для новой структуры"""
     try:
         client = init_gsheets()
         if not client:
@@ -92,61 +102,74 @@ def load_data_from_sheets():
             logger.warning("Not enough data in sheet")
             return None
         
-        vsp_map = {}
+        kic_map = {}
         city_map = {}
         
-        # Автоопределение структуры по заголовкам
+        # Автоопределение структуры по заголовкам для новой схемы
         headers = [h.lower().strip() for h in all_values[0]]
         logger.info(f"Detected headers: {headers}")
         
-        # Определяем индексы столбцов
-        vsp_idx = None
-        fio_idx = None
-        contact_idx = None
-        mobile_idx = None
+        # Определяем индексы столбцов для новой структуры
         city_idx = None
+        city_type_idx = None
+        kic_idx = None
+        address_idx = None
+        fio_idx = None
+        phone_idx = None
+        email_idx = None
         
         for i, header in enumerate(headers):
-            if any(word in header for word in ['всп', 'vsp', 'код']):
-                vsp_idx = i
-            elif any(word in header for word in ['фио', 'fio', 'имя', 'name']):
-                fio_idx = i
-            elif any(word in header for word in ['контакт', 'contact', 'телеграм', 'telegram']):
-                contact_idx = i
-            elif any(word in header for word in ['мобильный', 'mobile', 'телефон', 'phone']):
-                mobile_idx = i
-            elif any(word in header for word in ['город', 'city', 'город']):
+            header_lower = header.lower()
+            if any(word in header_lower for word in ['населенный', 'город', 'населённый']):
                 city_idx = i
+            elif any(word in header_lower for word in ['тип', 'type']):
+                city_type_idx = i
+            elif any(word in header_lower for word in ['киц', 'kic', 'код']):
+                kic_idx = i
+            elif any(word in header_lower for word in ['адрес', 'address']):
+                address_idx = i
+            elif any(word in header_lower for word in ['фио', 'fio', 'имя', 'name', 'ркиц']):
+                fio_idx = i
+            elif any(word in header_lower for word in ['телефон', 'phone', 'тел.']):
+                phone_idx = i
+            elif any(word in header_lower for word in ['email', 'e-mail', 'почта']):
+                email_idx = i
         
-        # Если не нашли стандартные заголовки, используем предположения
-        if vsp_idx is None: vsp_idx = 0
-        if fio_idx is None: fio_idx = 1
-        if contact_idx is None: contact_idx = 2
-        if mobile_idx is None: mobile_idx = 3
-        if city_idx is None: city_idx = 4
+        # Если не нашли стандартные заголовки, используем предположения по порядку
+        if city_idx is None: city_idx = 0
+        if city_type_idx is None: city_type_idx = 1
+        if kic_idx is None: kic_idx = 2
+        if address_idx is None: address_idx = 3
+        if fio_idx is None: fio_idx = 4
+        if phone_idx is None: phone_idx = 5
+        if email_idx is None: email_idx = 6
         
-        logger.info(f"Using column indices - VSP: {vsp_idx}, FIO: {fio_idx}, Contact: {contact_idx}, Mobile: {mobile_idx}, City: {city_idx}")
+        logger.info(f"Using column indices - City: {city_idx}, City Type: {city_type_idx}, KIC: {kic_idx}, Address: {address_idx}, FIO: {fio_idx}, Phone: {phone_idx}, Email: {email_idx}")
         
         # Обрабатываем данные
         for i, row in enumerate(all_values[1:], start=2):  # Пропускаем заголовок
-            if len(row) > max(vsp_idx, fio_idx, contact_idx, mobile_idx, city_idx):
-                vsp = str(row[vsp_idx]).strip() if vsp_idx < len(row) and row[vsp_idx] else ''
-                fio = str(row[fio_idx]).strip() if fio_idx < len(row) and row[fio_idx] else ''
-                contact = str(row[contact_idx]).strip() if contact_idx < len(row) and row[contact_idx] else ''
-                mobile = str(row[mobile_idx]).strip() if mobile_idx < len(row) and row[mobile_idx] else ''
+            if len(row) > max(city_idx, city_type_idx, kic_idx, address_idx, fio_idx, phone_idx, email_idx):
                 city = str(row[city_idx]).strip() if city_idx < len(row) and row[city_idx] else ''
+                city_type = str(row[city_type_idx]).strip() if city_type_idx < len(row) and row[city_type_idx] else ''
+                kic = str(row[kic_idx]).strip() if kic_idx < len(row) and row[kic_idx] else ''
+                address = str(row[address_idx]).strip() if address_idx < len(row) and row[address_idx] else ''
+                fio = str(row[fio_idx]).strip() if fio_idx < len(row) and row[fio_idx] else ''
+                phone = str(row[phone_idx]).strip() if phone_idx < len(row) and row[phone_idx] else ''
+                email = str(row[email_idx]).strip() if email_idx < len(row) and row[email_idx] else ''
                 
-                vsp = normalize_vsp_code(vsp)
+                kic = normalize_kic_code(kic)
                 
-                if vsp and fio:
+                if kic and fio:
                     record = {
-                        'vsp': vsp,
+                        'kic': kic,
+                        'city': city,
+                        'city_type': city_type,
+                        'address': address,
                         'fio': fio,
-                        'contact': contact,
-                        'mobile': mobile,
-                        'city': city
+                        'phone': phone,
+                        'email': email
                     }
-                    vsp_map[vsp] = record
+                    kic_map[kic] = record
                     
                     if city:
                         if city not in city_map:
@@ -155,8 +178,8 @@ def load_data_from_sheets():
             else:
                 logger.warning(f"Row {i} has insufficient columns: {row}")
         
-        logger.info(f"Processed {len(vsp_map)} records from Google Sheets")
-        return vsp_map, city_map
+        logger.info(f"Processed {len(kic_map)} records from Google Sheets")
+        return kic_map, city_map
         
     except Exception as e:
         logger.error(f"Error loading data from Google Sheets: {str(e)}")
@@ -164,18 +187,15 @@ def load_data_from_sheets():
         logger.error(f"Traceback: {traceback.format_exc()}")
         return None
 
-def normalize_vsp_code(vsp_raw):
-    """Нормализация кода ВСП"""
-    if not vsp_raw:
+def normalize_kic_code(kic_raw):
+    """Нормализация кода КИЦ"""
+    if not kic_raw:
         return ""
     
     # Удаляем лишние пробелы и приводим к верхнему регистру
-    vsp = vsp_raw.strip().upper()
+    kic = kic_raw.strip().upper()
     
-    # Заменяем различные разделители на стандартный слеш
-    vsp = vsp.replace(' ', '/').replace('\\', '/').replace('|', '/')
-    
-    return vsp
+    return kic
 
 def test_connection():
     """Тест подключения к Google Sheets"""
@@ -195,11 +215,19 @@ def test_connection():
         title = spreadsheet.title
         url = spreadsheet.url
         
+        # Получаем заголовки для проверки структуры
+        headers = sheet.row_values(1)
+        
         return {
             "success": True,
             "spreadsheet_title": title,
             "spreadsheet_url": url,
-            "sheet_title": sheet.title
+            "sheet_title": sheet.title,
+            "headers": headers,
+            "expected_headers": [
+                "Населенный пункт", "Тип населенного пункта", "КИЦ", 
+                "Адрес КИЦ", "ФИО РКИЦ", "Телефон РКИЦ", "Email РКИЦ"
+            ]
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
