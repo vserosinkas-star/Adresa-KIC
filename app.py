@@ -26,8 +26,8 @@ def send_telegram_message(chat_id, text):
         return False
 
 class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-    self.send_response(200)
+def do_GET(self):
+    self.send_response(200)  # ← 4 пробела (или 1 таб) в начале
     self.send_header('Content-type', 'text/plain; charset=utf-8')
     self.end_headers()
     self.wfile.write("✅ Бот куратор КИЦ работает! Используйте /start в Telegram".encode('utf-8'))
