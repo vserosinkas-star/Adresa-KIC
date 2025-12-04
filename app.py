@@ -3,9 +3,6 @@ import json
 import os
 import requests
 
-print("[DEBUG] GOOGLE_SHEETS_CREDENTIALS length:", len(GOOGLE_CREDENTIALS_JSON or ""))
-print("[DEBUG] First 50 chars:", (GOOGLE_CREDENTIALS_JSON or "")[:50])
-
 # === Конфигурация ===
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 SPREADSHEET_ID = "1h6dMEWsLcH--d4MB5CByx05xitOwhAGV"
