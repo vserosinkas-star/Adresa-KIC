@@ -30,7 +30,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
-        self.wfile.write(b"✅ Бот куратор КИЦ работает! Используйте /start в Telegram")
+        self.wfile.write("✅ Бот куратор КИЦ работает! Используйте /start в Telegram".encode('utf-8'))
     
     def do_POST(self):
         content_length = int(self.headers['Content-Length'])
