@@ -27,10 +27,10 @@ def send_telegram_message(chat_id, text):
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
-        self.end_headers()
-        self.wfile.write("✅ Бот куратор КИЦ работает! Используйте /start в Telegram".encode('utf-8'))
+    self.send_response(200)
+    self.send_header('Content-type', 'text/plain; charset=utf-8')
+    self.end_headers()
+    self.wfile.write("✅ Бот куратор КИЦ работает! Используйте /start в Telegram".encode('utf-8'))
     
     def do_POST(self):
         content_length = int(self.headers['Content-Length'])
