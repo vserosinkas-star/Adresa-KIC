@@ -3,86 +3,27 @@ import json
 import os
 import requests
 
-# === Конфигурация ===
+# === Настройки ===
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
-SPREADSHEET_ID = "1h6dMEWsLcH--d4MB5CByx05xitOwhAGV"
-SHEET_GID = "1532223079"  # gid из URL
-RANGE = f"Общий!A1:G1000"  # ← замените "Лист1" на имя вашего листа
+if not BOT_TOKEN:
+    raise RuntimeError("❌ BOT_TOKEN не задан в переменных окружения")
 
-# Получаем учётные данные из переменной окружения
-GOOGLE_CREDENTIALS_JSON = os.environ.get('GOOGLE_SHEETS_CREDENTIALS')
-if not GOOGLE_CREDENTIALS_JSON:
-    raise RuntimeError("❌ Переменная GOOGLE_SHEETS_CREDENTIALS не задана")
-
-try:
-    import gspread
-    from google.oauth2.service_account import Credentials
-except ImportError:
-    raise RuntimeError("❌ Установите зависимости: gspread, google-auth")
-
-# Инициализация клиента Google Sheets (выполняется при импорте → кэшируется)
-try:
-    creds = Credentials.from_service_account_info(
-        json.loads(GOOGLE_CREDENTIALS_JSON),
-        scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"]
-    )
-    client = gspread.authorize(creds)
-    sheet = client.open_by_key(SPREADSHEET_ID).worksheet_by_gid(int(SHEET_GID))
-except Exception as e:
-    print(f"[CRITICAL] Ошибка подключения к Google Sheets: {e}")
-    sheet = None
-
-
-def load_data_from_sheets():
-    """Загружает данные из Google Sheets и возвращает dict: {kic: record}"""
-    if not sheet:
-        return {}
-    try:
-        rows = sheet.get_all_values()
-        if not rows:
-            return {}
-        # Первая строка — заголовки
-        headers = rows[0]
-        data = {}
-        for row in rows[1:]:
-            if len(row) < 7:  # ожидаем минимум 7 колонок
-                continue
-            # Порядок колонок: kic, city, city_type, address, fio, phone, email
-            record = {
-                "kic": row[0].strip(),
-                "city": row[1].strip(),
-                "city_type": row[2].strip(),
-                "address": row[3].strip(),
-                "fio": row[4].strip(),
-                "phone": row[5].strip(),
-                "email": row[6].strip(),
-            }
-            key = record["kic"].upper()
-            if key:
-                data[key] = record
-        return data
-    except Exception as e:
-        print(f"[ERROR] Ошибка загрузки данных: {e}")
-        return {}
-
-
-# Кэшируем данные при старте (можно обновлять раз в N минут, если нужно)
-DATA = load_data_from_sheets()
+# 🔴 ЗАМЕНИТЕ ЭТО НА ВАШИ РЕАЛЬНЫЕ ДАННЫЕ (можно обновлять вручную или по крону)
+DATA = {
+    "KIC001": {"kic": "KIC001", "city": "Аксарка", "city_type": "село", "address": "ул. Центральная, 15", "fio": "Гранкина Елена Михайловна", "phone": "8-909-198-88-42", "email": "grankina@example.com"},
+    "KIC002": {"kic": "KIC002", "city": "Краснодар", "city_type": "город", "address": "ул. Ленина, 1", "fio": "Иванов Иван Иванович", "phone": "+7-918-123-45-67", "email": "ivanov@example.com"},
+    # Добавьте все КИЦ вручную или загрузите из JSON-файла
+}
 
 
 def send_telegram_message(chat_id, text):
-    if not BOT_TOKEN:
-        print("[ERROR] BOT_TOKEN не задан")
-        return False
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"  # ✅ без пробелов!
         payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
         response = requests.post(url, json=payload, timeout=10)
-        if response.status_code != 200:
-            print(f"[TG ERROR] {response.status_code}: {response.text}")
         return response.status_code == 200
     except Exception as e:
-        print(f"[TG EXCEPTION] {e}")
+        print(f"[TG ERROR] {e}")
         return False
 
 
@@ -103,16 +44,14 @@ class Handler(BaseHTTPRequestHandler):
             if 'message' in update and 'text' in update['message']:
                 chat_id = update['message']['chat']['id']
                 raw_text = update['message']['text'].strip()
-                clean_key = raw_text.upper().replace(' ', '').replace('-', '')
+                # Нормализуем: убираем пробелы/дефисы, приводим к верхнему регистру
+                key = raw_text.upper().replace(' ', '').replace('-', '').replace('_', '')
 
                 if raw_text == '/start':
-                    reply = (
-                        "👋 Привет! Я <b>бот Адреса КИЦ</b>.\n\n"
-                        "🔍 Введите код КИЦ (например: <code>KIC001</code>)"
-                    )
+                    reply = "👋 Привет! Я <b>бот-куратор КИЦ</b>.\nВведите код КИЦ (например: <code>KIC001</code>)"
                     send_telegram_message(chat_id, reply)
-                elif clean_key in DATA:
-                    r = DATA[clean_key]
+                elif key in DATA:
+                    r = DATA[key]
                     reply = (
                         f"✅ <b>КИЦ {r['kic']}</b>\n\n"
                         f"🏘 Город: <b>{r['city']}</b> ({r['city_type']})\n"
@@ -122,7 +61,7 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     send_telegram_message(chat_id, reply)
                 else:
-                    reply = f"❌ КИЦ <code>{raw_text}</code> не найден. Всего загружено: {len(DATA)}"
+                    reply = f"❌ КИЦ <code>{raw_text}</code> не найден. Всего: {len(DATA)}"
                     send_telegram_message(chat_id, reply)
 
             self.send_response(200)
@@ -131,7 +70,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"status": "ok"}).encode('utf-8'))
 
         except Exception as e:
-            print(f"[POST ERROR] {e}")
+            print(f"[ERROR] {e}")
             self.send_response(500)
             self.end_headers()
 
