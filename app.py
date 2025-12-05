@@ -1,4 +1,3 @@
-from http.server import BaseHTTPRequestHandler
 import json
 import os
 import requests
@@ -6,7 +5,6 @@ import gspread
 from google.oauth2.service_account import Credentials
 import re
 import base64
-import traceback
 
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 SHEET_ID = "1h6dMEWsLcH--d4MB5CByx05xitOwhAGV"
@@ -72,49 +70,28 @@ def load_google_sheets():
             debug_log("GOOGLE_SERVICE_ACCOUNT не найден")
             return None, "GOOGLE_SERVICE_ACCOUNT не установлен"
         
-        debug_log(f"Длина GOOGLE_SERVICE_ACCOUNT: {len(sa_json)}")
-        
         # Пробуем декодировать как base64
         try:
             sa_json = base64.b64decode(sa_json).decode('utf-8')
-            debug_log("Успешно декодирован base64")
         except:
-            debug_log("Используем JSON как есть")
+            pass
         
         # Очищаем
         sa_json = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', sa_json)
         
         # Парсим JSON
-        try:
-            sa_info = json.loads(sa_json)
-        except json.JSONDecodeError as e:
-            debug_log(f"Ошибка JSON: {str(e)}")
-            return None, f"Неверный формат JSON"
+        sa_info = json.loads(sa_json)
         
         # Создаем клиент
-        try:
-            creds = Credentials.from_service_account_info(
-                sa_info,
-                scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
-            )
-            client = gspread.authorize(creds)
-        except Exception as e:
-            debug_log(f"Ошибка авторизации: {str(e)}")
-            return None, f"Ошибка авторизации"
+        creds = Credentials.from_service_account_info(
+            sa_info,
+            scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
+        )
+        client = gspread.authorize(creds)
         
         # Открываем таблицу
-        try:
-            sheet = client.open_by_key(SHEET_ID)
-        except Exception as e:
-            debug_log(f"Ошибка открытия таблицы: {str(e)}")
-            return None, f"Не удалось открыть таблицу"
-        
-        # Получаем первый лист
-        try:
-            worksheet = sheet.get_worksheet(0)
-        except Exception as e:
-            debug_log(f"Ошибка получения листа: {str(e)}")
-            return None, f"Не удалось получить лист"
+        sheet = client.open_by_key(SHEET_ID)
+        worksheet = sheet.get_worksheet(0)
         
         # Получаем все данные
         all_values = worksheet.get_all_values()
@@ -122,11 +99,8 @@ def load_google_sheets():
         if len(all_values) <= 1:
             return None, "Таблица пуста"
         
-        debug_log(f"Получено строк: {len(all_values)}")
-        
         # Получаем заголовки
         headers = [str(h).strip() for h in all_values[0]]
-        debug_log(f"Заголовки: {headers}")
         
         # Определяем индексы колонок
         col_index = {}
@@ -146,8 +120,6 @@ def load_google_sheets():
                 col_index['phone'] = i
             elif 'email ркиц' in header_lower or 'email' in header_lower:
                 col_index['email'] = i
-        
-        debug_log(f"Индексы колонок: {col_index}")
         
         # Проверяем необходимые колонки
         required_cols = ['city']
@@ -192,7 +164,6 @@ def load_google_sheets():
         return result, f"Загружено {len(result)} записей"
         
     except Exception as e:
-        debug_log(f"Ошибка: {str(e)}")
         return None, f"Ошибка: {str(e)[:100]}"
 
 def normalize_city_name(city_name):
@@ -448,18 +419,18 @@ def handle_telegram_update(update):
             
             send_message(chat_id, reply)
         
-        return {"status": "ok"}
+        return {"ok": True}
         
     except Exception as e:
         debug_log(f"Ошибка обработки Telegram: {e}")
-        return {"status": "error", "message": str(e)}
+        return {"ok": False, "error": str(e)}
 
-# Главный обработчик для Vercel
-def handler(request, context=None):
-    """Обработчик запросов для Vercel"""
+# ===== VERCEL SPECIFIC HANDLER =====
+def app(event, context):
+    """Обработчик для Vercel Python Runtime"""
     try:
         # Определяем метод запроса
-        method = request.method
+        method = event.get('httpMethod', 'GET')
         
         if method == 'GET':
             # Возвращаем HTML страницу статуса
@@ -475,7 +446,7 @@ def handler(request, context=None):
         elif method == 'POST':
             # Обрабатываем webhook от Telegram
             try:
-                body = request.body
+                body = event.get('body', '{}')
                 if isinstance(body, str):
                     update = json.loads(body)
                 else:
@@ -493,48 +464,40 @@ def handler(request, context=None):
             except json.JSONDecodeError:
                 return {
                     'statusCode': 400,
-                    'body': json.dumps({'status': 'error', 'message': 'Invalid JSON'})
+                    'headers': {
+                        'Content-Type': 'application/json'
+                    },
+                    'body': json.dumps({'ok': False, 'error': 'Invalid JSON'})
                 }
             except Exception as e:
                 return {
                     'statusCode': 500,
-                    'body': json.dumps({'status': 'error', 'message': str(e)})
+                    'headers': {
+                        'Content-Type': 'application/json'
+                    },
+                    'body': json.dumps({'ok': False, 'error': str(e)})
                 }
         
         else:
             return {
                 'statusCode': 405,
-                'body': json.dumps({'status': 'error', 'message': 'Method not allowed'})
+                'headers': {
+                    'Content-Type': 'application/json'
+                },
+                'body': json.dumps({'ok': False, 'error': 'Method not allowed'})
             }
     
     except Exception as e:
         debug_log(f"Ошибка обработчика: {e}")
         return {
             'statusCode': 500,
-            'body': json.dumps({'status': 'error', 'message': 'Internal server error'})
+            'headers': {
+                'Content-Type': 'application/json'
+            },
+            'body': json.dumps({'ok': False, 'error': 'Internal server error'})
         }
 
-# Для локального тестирования (не используется в Vercel)
-if __name__ == "__main__":
-    from http.server import HTTPServer
-    class LocalHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html; charset=utf-8')
-            self.end_headers()
-            self.wfile.write(get_status_html().encode('utf-8'))
-        
-        def do_POST(self):
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = self.rfile.read(content_length)
-            update = json.loads(post_data)
-            result = handle_telegram_update(update)
-            
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps(result).encode())
-    
-    print("Запуск локального сервера на порту 8080...")
-    server = HTTPServer(('localhost', 8080), LocalHandler)
-    server.serve_forever()
+# Для Vercel
+def handler(event, context):
+    """Alias для Vercel"""
+    return app(event, context)
