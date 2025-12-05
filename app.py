@@ -6,6 +6,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 import re
+import sys
 
 # === Настройки ===
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
@@ -13,7 +14,7 @@ if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN не задан в переменных окружения")
 
 # ID Google таблицы (взять из URL)
-SHEET_ID = "1h6dMEWsLcH--d4MB5CByx05xitOwhAGV"
+SHEET_ID = os.environ.get('GOOGLE_SHEET_ID', "1h6dMEWsLcH--d4MB5CByx05xitOwhAGV")
 
 # Кеширование данных
 DATA_CACHE = {
@@ -59,7 +60,8 @@ def normalize_kic_code(kic_code):
 
 def load_data_from_sheets(force_update=False):
     """Загружает данные из Google Sheets"""
-    print("[SHEETS] Начинаю загрузку данных...")
+    global SHEET_ID
+    print(f"[SHEETS] Начинаю загрузку данных из таблицы {SHEET_ID}...")
     
     client = get_google_sheets_service()
     if not client:
@@ -71,7 +73,7 @@ def load_data_from_sheets(force_update=False):
         print(f"[SHEETS] Открываю таблицу ID: {SHEET_ID}")
         spreadsheet = client.open_by_key(SHEET_ID)
         
-        # Получаем ПЕРВЫЙ лист (самый простой способ)
+        # Получаем ПЕРВЫЙ лист
         worksheet = spreadsheet.get_worksheet(0)
         print(f"[SHEETS] Использую первый лист: {worksheet.title}")
         
@@ -94,7 +96,7 @@ def load_data_from_sheets(force_update=False):
         # Определяем заголовки (первая строка)
         headers = [str(h).strip() for h in all_values[0]]
         
-        # Ищем индексы нужных колонок (простой поиск по ключевым словам)
+        # Ищем индексы нужных колонок
         column_indexes = {}
         
         # Проходим по всем заголовкам и ищем нужные
@@ -159,7 +161,6 @@ def load_data_from_sheets(force_update=False):
                 kic_code = str(kic_value).strip()
                 
                 if not kic_code:
-                    # Если нет кода КИЦ, пропускаем строку
                     continue
                 
                 # Нормализуем ключ
@@ -207,16 +208,16 @@ def load_data_from_sheets(force_update=False):
         if data_dict:
             print("[SHEETS] Примеры загруженных данных:")
             for i, (key, value) in enumerate(list(data_dict.items())[:3]):
-                print(f"  {i+1}. {value['kic']} - {value.get('city', 'Нет города')} - {value.get('fio', 'Нет ФИО')[:20]}...")
+                print(f"  {i+1}. {value.get('kic', key)} - {value.get('city', 'Нет города')} - {value.get('fio', 'Нет ФИО')[:20]}...")
         else:
             print("[SHEETS WARNING] Не загружено ни одной записи!")
-            print("[SHEETS] Возможные причины:")
-            print("  1. В таблице нет данных (только заголовки)")
-            print("  2. В колонке с кодом КИЦ пустые значения")
-            print("  3. Неправильный формат данных")
         
         return data_dict
         
+    except gspread.exceptions.SpreadsheetNotFound:
+        print(f"[SHEETS ERROR] Таблица с ID {SHEET_ID} не найдена!")
+        print("[SHEETS] Проверьте ID таблицы и права доступа")
+        return {}
     except Exception as e:
         print(f"[SHEETS ERROR] Критическая ошибка: {str(e)}")
         import traceback
@@ -528,10 +529,9 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode('utf-8'))
 
-# Для тестирования локально
+# Для тестирования локально (этот блок не выполняется в Vercel)
 if __name__ == "__main__":
     from http.server import HTTPServer
-    import sys
     
     print("=" * 50)
     print("🤖 Бот-куратор КИЦ")
@@ -551,6 +551,7 @@ if __name__ == "__main__":
     
     # Тестируем подключение
     print("\n🔗 Тестирую подключение к Google Sheets...")
+    print(f"📁 ID таблицы: {SHEET_ID}")
     data = load_data_from_sheets()
     
     if data:
@@ -565,16 +566,6 @@ if __name__ == "__main__":
         print("2. Таблица пустая")
         print("3. Неверный ID таблицы")
         print("4. Нет колонки с кодом КИЦ")
-        
-        # Спросим ID таблицы
-        print(f"\n📁 Текущий ID таблицы: {SHEET_ID}")
-        new_id = input("Введите новый ID таблицы (или Enter для продолжения): ").strip()
-        if new_id:
-            global SHEET_ID
-            SHEET_ID = new_id
-            print(f"🔄 ID таблицы изменен на: {SHEET_ID}")
-            print("Повторная попытка подключения...")
-            data = load_data_from_sheets()
     
     print(f"\n🌐 Сервер запускается на http://localhost:8080")
     print("📱 Настройте вебхук в Telegram:")
