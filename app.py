@@ -66,38 +66,32 @@ def debug_log(message):
 def load_google_sheets():
     """Загружает данные из Google Sheets"""
     try:
-        # Получаем JSON сервисного аккаунта из переменных окружения
         sa_json = os.environ.get('GOOGLE_SERVICE_ACCOUNT')
         
         if not sa_json:
-            debug_log("GOOGLE_SERVICE_ACCOUNT не найден в переменных окружения")
-            return None, "Переменная GOOGLE_SERVICE_ACCOUNT не установлена"
+            debug_log("GOOGLE_SERVICE_ACCOUNT не найден")
+            return None, "GOOGLE_SERVICE_ACCOUNT не установлен"
         
-        debug_log(f"Длина GOOGLE_SERVICE_ACCOUNT: {len(sa_json)} символов")
+        debug_log(f"Длина GOOGLE_SERVICE_ACCOUNT: {len(sa_json)}")
         
         # Пробуем декодировать как base64
         try:
-            debug_log("Попытка декодирования base64...")
             sa_json = base64.b64decode(sa_json).decode('utf-8')
             debug_log("Успешно декодирован base64")
-        except Exception as e:
-            debug_log(f"Не удалось декодировать base64 (используем как есть): {str(e)[:100]}")
+        except:
+            debug_log("Используем JSON как есть")
         
-        # Очищаем от невидимых символов
+        # Очищаем
         sa_json = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', sa_json)
         
-        # Проверяем, что это валидный JSON
-        debug_log("Парсинг JSON...")
+        # Парсим JSON
         try:
             sa_info = json.loads(sa_json)
-            debug_log("JSON успешно распарсен")
         except json.JSONDecodeError as e:
             debug_log(f"Ошибка JSON: {str(e)}")
-            debug_log(f"Первые 200 символов: {sa_json[:200]}")
-            return None, f"Неверный формат JSON: {str(e)[:100]}"
+            return None, f"Неверный формат JSON"
         
-        # Создаем клиент Google Sheets
-        debug_log("Создание клиента Google Sheets...")
+        # Создаем клиент
         try:
             creds = Credentials.from_service_account_info(
                 sa_info,
@@ -106,30 +100,27 @@ def load_google_sheets():
             client = gspread.authorize(creds)
         except Exception as e:
             debug_log(f"Ошибка авторизации: {str(e)}")
-            return None, f"Ошибка авторизации Google: {str(e)[:100]}"
+            return None, f"Ошибка авторизации"
         
         # Открываем таблицу
-        debug_log(f"Открытие таблицы с ID: {SHEET_ID}")
         try:
             sheet = client.open_by_key(SHEET_ID)
         except Exception as e:
             debug_log(f"Ошибка открытия таблицы: {str(e)}")
-            return None, f"Не удалось открыть таблицу. Проверьте ID и доступы"
+            return None, f"Не удалось открыть таблицу"
         
         # Получаем первый лист
-        debug_log("Получение первого листа...")
         try:
             worksheet = sheet.get_worksheet(0)
         except Exception as e:
             debug_log(f"Ошибка получения листа: {str(e)}")
-            return None, f"Не удалось получить лист таблицы"
+            return None, f"Не удалось получить лист"
         
         # Получаем все данные
-        debug_log("Получение данных из таблицы...")
         all_values = worksheet.get_all_values()
         
         if len(all_values) <= 1:
-            return None, "Таблица пуста или содержит только заголовки"
+            return None, "Таблица пуста"
         
         debug_log(f"Получено строк: {len(all_values)}")
         
@@ -162,21 +153,18 @@ def load_google_sheets():
         required_cols = ['city']
         missing_cols = [col for col in required_cols if col not in col_index]
         if missing_cols:
-            return None, f"Отсутствуют обязательные колонки: {missing_cols}"
+            return None, f"Отсутствуют колонки: {missing_cols}"
         
         # Обрабатываем данные
         result = {}
-        for row_num, row in enumerate(all_values[1:], start=2):
+        for row in all_values[1:]:
             try:
-                # Получаем населенный пункт
                 city_value = row[col_index['city']].strip() if col_index['city'] < len(row) else ""
                 if not city_value:
                     continue
                 
-                # Нормализуем ключ для поиска
                 key = normalize_city_name(city_value)
                 
-                # Создаем запись
                 entry = {
                     "city": city_value,
                     "city_type": row[col_index.get('city_type', col_index['city'])].strip() 
@@ -195,37 +183,27 @@ def load_google_sheets():
                 
                 result[key] = entry
                     
-            except Exception as e:
-                debug_log(f"Ошибка обработки строки {row_num}: {e}")
+            except Exception:
                 continue
         
         if not result:
-            return None, "Не найдено ни одной записи в таблице"
+            return None, "Нет данных в таблице"
         
-        debug_log(f"Успешно загружено {len(result)} записей")
-        return result, f"Успешно загружено {len(result)} населенных пунктов из Google Sheets"
+        return result, f"Загружено {len(result)} записей"
         
     except Exception as e:
-        error_trace = traceback.format_exc()
-        debug_log(f"Критическая ошибка в load_google_sheets: {str(e)}")
-        debug_log(f"Трассировка: {error_trace}")
-        return None, f"Ошибка: {str(e)[:200]}"
+        debug_log(f"Ошибка: {str(e)}")
+        return None, f"Ошибка: {str(e)[:100]}"
 
 def normalize_city_name(city_name):
     """Нормализует название населенного пункта для поиска"""
-    # Убираем лишние символы, приводим к верхнему регистру
     normalized = re.sub(r'[^\w\s-]', '', str(city_name).upper())
-    # Заменяем несколько пробелов на один
     normalized = re.sub(r'\s+', ' ', normalized).strip()
-    # Убираем лишние слова
-    normalized = re.sub(r'\b(ГОРОД|СЕЛО|ПОСЕЛОК|ДЕРЕВНЯ|ПГТ|СТАНЦИЯ)\b', '', normalized, flags=re.IGNORECASE).strip()
     return normalized
 
 def normalize_search_query(query):
     """Нормализует поисковый запрос"""
-    # Убираем лишние символы, приводим к верхнему регистру
     normalized = re.sub(r'[^\w\s-]', '', str(query).upper())
-    # Заменяем несколько пробелов на один
     normalized = re.sub(r'\s+', ' ', normalized).strip()
     return normalized
 
@@ -242,27 +220,17 @@ def find_city(data, query):
     
     # Частичное совпадение
     for city_key, city_data in data.items():
-        # Проверяем полное совпадение
-        if normalized_query == city_key:
+        if normalized_query in city_key or city_key in normalized_query:
             return city_data
         
-        # Проверяем вхождение запроса в название
-        if normalized_query in city_key:
-            return city_data
-        
-        # Проверяем вхождение названия в запрос
-        if city_key in normalized_query:
-            return city_data
-        
-        # Проверяем русское название (без транслитерации)
         if city_data.get('city', '').upper() == normalized_query:
             return city_data
     
-    # Поиск по словам (частичное совпадение слов)
+    # Поиск по словам
     query_words = set(normalized_query.split())
     for city_key, city_data in data.items():
         city_words = set(city_key.split())
-        if query_words and city_words and query_words.intersection(city_words):
+        if query_words.intersection(city_words):
             return city_data
     
     return None
@@ -280,7 +248,7 @@ def send_message(chat_id, text):
         response = requests.post(url, json=payload, timeout=10)
         return response.status_code == 200
     except Exception as e:
-        debug_log(f"Ошибка отправки в Telegram: {e}")
+        debug_log(f"Ошибка отправки: {e}")
         return False
 
 def format_city_response(city_data, source):
@@ -297,40 +265,27 @@ def format_city_response(city_data, source):
     if city_data.get('fio'):
         reply += f"👤 <b>Ответственный:</b> {city_data['fio']}\n"
     if city_data.get('phone'):
-        phone = city_data['phone']
-        reply += f"📞 <b>Телефон:</b> {phone}\n"
+        reply += f"📞 <b>Телефон:</b> {city_data['phone']}\n"
     if city_data.get('email'):
-        email = city_data['email']
-        reply += f"📧 <b>Email:</b> {email}"
+        reply += f"📧 <b>Email:</b> {city_data['email']}"
     
     reply += f"\n\n📋 <i>Данные из: {source}</i>"
     return reply
 
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
-        """Отключаем стандартное логирование"""
-        pass
+def get_status_html():
+    """Генерирует HTML страницу статуса"""
+    # Проверяем подключение к Google Sheets
+    has_google_sa = bool(os.environ.get('GOOGLE_SERVICE_ACCOUNT'))
+    sheets_data, sheets_msg = load_google_sheets()
     
-    def do_GET(self):
-        """Страница статуса"""
-        try:
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html; charset=utf-8')
-            self.end_headers()
-            
-            # Проверяем подключение к Google Sheets
-            has_google_sa = bool(os.environ.get('GOOGLE_SERVICE_ACCOUNT'))
-            sheets_data, sheets_msg = load_google_sheets()
-            
-            if sheets_data:
-                data = sheets_data
-                source = f"Google Sheets ({sheets_msg})"
-            else:
-                data = TEST_DATA
-                source = f"тестовые данные (Google Sheets: {sheets_msg})"
-            
-            # Создаем HTML
-            html = f'''<!DOCTYPE html>
+    if sheets_data:
+        data = sheets_data
+        source = f"Google Sheets ({sheets_msg})"
+    else:
+        data = TEST_DATA
+        source = f"тестовые данные (Google Sheets: {sheets_msg})"
+    
+    html = f'''<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -339,7 +294,6 @@ class Handler(BaseHTTPRequestHandler):
         body {{ font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; background: #f8f9fa; }}
         .success {{ color: #28a745; }}
         .error {{ color: #dc3545; }}
-        .warning {{ color: #ffc107; }}
         .box {{ background: white; padding: 20px; border-radius: 8px; margin: 15px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
         h1 {{ color: #333; }}
         h3 {{ color: #555; margin-top: 0; }}
@@ -355,13 +309,13 @@ class Handler(BaseHTTPRequestHandler):
         <div class="status-container">
             <span>GOOGLE_SERVICE_ACCOUNT:</span>
             <span class="{'success' if has_google_sa else 'error'}">
-                {'✅ Установлен' if has_google_sa else '❌ Не установлен'}
+                {'✔ Установлен' if has_google_sa else '✗ Не установлен'}
             </span>
         </div>
         <div class="status-container">
             <span>Google Sheets:</span>
             <span class="{'success' if sheets_data else 'error'}">
-                {'✅ Подключен' if sheets_data else '❌ ' + sheets_msg}
+                {'✔ Подключен' if sheets_data else '✗ ' + sheets_msg}
             </span>
         </div>
         <p><strong>Источник данных:</strong> {source}</p>
@@ -383,152 +337,204 @@ class Handler(BaseHTTPRequestHandler):
         <p><code>/status</code> - статус системы</p>
         <p><code>/search Новый Уренгой</code> - поиск по городу</p>
         <p><code>Антипаюта</code> - прямой поиск</p>
-        <p><code>/list</code> - список всех населенных пунктов</p>
     </div>
     
     <div class="box">
         <h3>📍 Примеры населенных пунктов</h3>'''
-            
-            # Показываем несколько примеров
-            examples = list(data.values())[:10]
-            for city_info in examples:
-                html += f'<p><code>{city_info["city"]}</code> - {city_info.get("city_type", "").upper()}</p>'
-            
-            html += '''
+    
+    # Показываем примеры
+    examples = list(data.values())[:10]
+    for city_info in examples:
+        html += f'<p><code>{city_info["city"]}</code> - {city_info.get("city_type", "").upper()}</p>'
+    
+    html += '''
     </div>
 </body>
 </html>'''
-            
-            self.wfile.write(html.encode('utf-8'))
-            
-        except Exception as e:
-            self.send_response(500)
-            self.send_header('Content-type', 'text/html; charset=utf-8')
-            self.end_headers()
-            error_html = f"<h1>Ошибка</h1><p>{str(e)}</p>"
-            self.wfile.write(error_html.encode('utf-8'))
     
-    def do_POST(self):
-        """Обработчик Telegram"""
-        try:
-            content_length = int(self.headers.get('Content-Length', 0))
-            post_data = self.rfile.read(content_length)
-            update = json.loads(post_data)
+    return html
 
-            if 'message' in update and 'text' in update['message']:
-                chat_id = update['message']['chat']['id']
-                raw_text = update['message']['text'].strip()
-                
-                # Получаем данные
-                sheets_data, sheets_msg = load_google_sheets()
+def handle_telegram_update(update):
+    """Обрабатывает обновление от Telegram"""
+    try:
+        if 'message' in update and 'text' in update['message']:
+            chat_id = update['message']['chat']['id']
+            raw_text = update['message']['text'].strip()
+            
+            # Получаем данные
+            sheets_data, sheets_msg = load_google_sheets()
+            if sheets_data:
+                data = sheets_data
+                source = "Google Sheets"
+            else:
+                data = TEST_DATA
+                source = "тестовые данные"
+            
+            # Обрабатываем команды
+            if raw_text.lower() == '/start':
+                reply = (
+                    "👋 <b>Привет! Я бот-куратор КИЦ</b>\n\n"
+                    "🔍 <b>Как использовать:</b>\n"
+                    "Введите название населенного пункта для поиска КИЦ\n\n"
+                    "<b>Примеры запросов:</b>\n"
+                    "<code>Новый Уренгой</code>\n"
+                    "<code>Антипаюта</code>\n"
+                    "<code>Тазовский</code>\n\n"
+                    f"📊 <b>Статус:</b> {source}\n"
+                    f"📍 <b>Населенных пунктов в базе:</b> {len(data)}"
+                )
+            
+            elif raw_text.lower() == '/status':
+                has_google_sa = bool(os.environ.get('GOOGLE_SERVICE_ACCOUNT'))
                 if sheets_data:
-                    data = sheets_data
-                    source = "Google Sheets"
+                    gs_status = f"✔ Подключен ({sheets_msg})"
                 else:
-                    data = TEST_DATA
-                    source = "тестовые данные"
+                    gs_status = f"✗ {sheets_msg}"
                 
-                # Обрабатываем команды
-                if raw_text.lower() == '/start':
-                    reply = (
-                        "👋 <b>Привет! Я бот-куратор КИЦ</b>\n\n"
-                        "🔍 <b>Как использовать:</b>\n"
-                        "Введите название населенного пункта для поиска информации о КИЦ\n\n"
-                        "<b>Примеры запросов:</b>\n"
-                        "<code>Новый Уренгой</code>\n"
-                        "<code>Антипаюта</code>\n"
-                        "<code>Тазовский</code>\n\n"
-                        f"📊 <b>Статус:</b> {source}\n"
-                        f"📍 <b>Населенных пунктов в базе:</b> {len(data)}"
-                    )
-                
-                elif raw_text.lower() == '/status':
-                    has_google_sa = bool(os.environ.get('GOOGLE_SERVICE_ACCOUNT'))
-                    if sheets_data:
-                        gs_status = f"✅ Подключен ({sheets_msg})"
-                    else:
-                        gs_status = f"❌ {sheets_msg}"
-                    
-                    reply = (
-                        f"📊 <b>Статус системы:</b>\n\n"
-                        f"• Google Sheets: {gs_status}\n"
-                        f"• Населенных пунктов в базе: {len(data)}\n"
-                        f"• Источник данных: {source}\n\n"
-                        f"🔍 <b>Примеры запросов:</b>\n"
-                        f"<code>Новый Уренгой</code>\n"
-                        f"<code>Антипаюта</code>\n"
-                        f"<code>Тазовский</code>"
-                    )
-                
-                elif raw_text.lower().startswith('/search'):
-                    # Команда поиска /search ГОРОД
-                    search_query = raw_text[7:].strip()  # Убираем '/search'
-                    if not search_query:
-                        reply = "❌ Укажите название населенного пункта после команды /search\n\nПример: <code>/search Новый Уренгой</code>"
-                    else:
-                        city_data = find_city(data, search_query)
-                        if city_data:
-                            reply = format_city_response(city_data, source)
-                        else:
-                            # Показываем доступные населенные пункты
-                            examples = []
-                            for city_key, city_info in list(data.items())[:8]:
-                                examples.append(f"<code>{city_info['city']}</code>")
-                            
-                            reply = f"❌ Населенный пункт <code>{search_query}</code> не найден.\n\n"
-                            reply += f"Всего в базе: {len(data)} населенных пунктов\n"
-                            if examples:
-                                reply += f"\n<b>Примеры:</b>\n" + "\n".join(examples)
-                
-                elif raw_text.lower() == '/list':
-                    # Показать список всех населенных пунктов
-                    if len(data) <= 20:
-                        reply = "📍 <b>Все населенные пункты в базе:</b>\n\n"
-                        for city_key, city_info in sorted(data.items(), key=lambda x: x[1]['city']):
-                            reply += f"• {city_info['city']} ({city_info.get('city_type', '')})\n"
-                    else:
-                        reply = f"📍 <b>Населенных пунктов в базе:</b> {len(data)}\n\n"
-                        reply += "<b>Первые 20 населенных пунктов:</b>\n"
-                        for i, (city_key, city_info) in enumerate(sorted(list(data.items())[:20], key=lambda x: x[1]['city'])):
-                            reply += f"{i+1}. {city_info['city']} ({city_info.get('city_type', '')})\n"
-                        reply += f"\n... и еще {len(data) - 20} населенных пунктов"
-                
+                reply = (
+                    f"📊 <b>Статус системы:</b>\n\n"
+                    f"• Google Sheets: {gs_status}\n"
+                    f"• Населенных пунктов в базе: {len(data)}\n"
+                    f"• Источник данных: {source}\n\n"
+                    f"🔍 <b>Примеры запросов:</b>\n"
+                    f"<code>Новый Уренгой</code>\n"
+                    f"<code>Антипаюта</code>\n"
+                    f"<code>Тазовский</code>"
+                )
+            
+            elif raw_text.lower().startswith('/search'):
+                search_query = raw_text[7:].strip()
+                if not search_query:
+                    reply = "❌ Укажите название населенного пункта после команды /search\n\nПример: <code>/search Новый Уренгой</code>"
                 else:
-                    # Обычный поиск по населенному пункту
-                    city_data = find_city(data, raw_text)
+                    city_data = find_city(data, search_query)
                     if city_data:
                         reply = format_city_response(city_data, source)
                     else:
-                        # Показываем доступные населенные пункты
                         examples = []
-                        for city_key, city_info in list(data.items())[:8]:
+                        for city_key, city_info in list(data.items())[:5]:
                             examples.append(f"<code>{city_info['city']}</code>")
                         
-                        reply = f"❌ Населенный пункт <code>{raw_text}</code> не найден.\n\n"
+                        reply = f"❌ Населенный пункт <code>{search_query}</code> не найден.\n\n"
                         reply += f"Всего в базе: {len(data)} населенных пунктов\n"
                         if examples:
                             reply += f"\n<b>Примеры:</b>\n" + "\n".join(examples)
-                        reply += "\n💡 <b>Подсказка:</b> Используйте команду <code>/list</code> чтобы увидеть все населенные пункты"
+            
+            elif raw_text.lower() == '/list':
+                if len(data) <= 20:
+                    reply = "📍 <b>Все населенные пункты в базе:</b>\n\n"
+                    for city_key, city_info in sorted(data.items(), key=lambda x: x[1]['city']):
+                        reply += f"• {city_info['city']} ({city_info.get('city_type', '')})\n"
+                else:
+                    reply = f"📍 <b>Населенных пунктов в базе:</b> {len(data)}\n\n"
+                    reply += "<b>Первые 20 населенных пунктов:</b>\n"
+                    for i, (city_key, city_info) in enumerate(sorted(list(data.items())[:20], key=lambda x: x[1]['city'])):
+                        reply += f"{i+1}. {city_info['city']} ({city_info.get('city_type', '')})\n"
+                    reply += f"\n... и еще {len(data) - 20} населенных пунктов"
+            
+            else:
+                city_data = find_city(data, raw_text)
+                if city_data:
+                    reply = format_city_response(city_data, source)
+                else:
+                    examples = []
+                    for city_key, city_info in list(data.items())[:5]:
+                        examples.append(f"<code>{city_info['city']}</code>")
+                    
+                    reply = f"❌ Населенный пункт <code>{raw_text}</code> не найден.\n\n"
+                    reply += f"Всего в базе: {len(data)} населенных пунктов\n"
+                    if examples:
+                        reply += f"\n<b>Примеры:</b>\n" + "\n".join(examples)
+            
+            send_message(chat_id, reply)
+        
+        return {"status": "ok"}
+        
+    except Exception as e:
+        debug_log(f"Ошибка обработки Telegram: {e}")
+        return {"status": "error", "message": str(e)}
+
+# Главный обработчик для Vercel
+def handler(request, context=None):
+    """Обработчик запросов для Vercel"""
+    try:
+        # Определяем метод запроса
+        method = request.method
+        
+        if method == 'GET':
+            # Возвращаем HTML страницу статуса
+            html = get_status_html()
+            return {
+                'statusCode': 200,
+                'headers': {
+                    'Content-Type': 'text/html; charset=utf-8'
+                },
+                'body': html
+            }
+        
+        elif method == 'POST':
+            # Обрабатываем webhook от Telegram
+            try:
+                body = request.body
+                if isinstance(body, str):
+                    update = json.loads(body)
+                else:
+                    update = json.loads(body.decode('utf-8'))
                 
-                send_message(chat_id, reply)
+                result = handle_telegram_update(update)
+                
+                return {
+                    'statusCode': 200,
+                    'headers': {
+                        'Content-Type': 'application/json'
+                    },
+                    'body': json.dumps(result)
+                }
+            except json.JSONDecodeError:
+                return {
+                    'statusCode': 400,
+                    'body': json.dumps({'status': 'error', 'message': 'Invalid JSON'})
+                }
+            except Exception as e:
+                return {
+                    'statusCode': 500,
+                    'body': json.dumps({'status': 'error', 'message': str(e)})
+                }
+        
+        else:
+            return {
+                'statusCode': 405,
+                'body': json.dumps({'status': 'error', 'message': 'Method not allowed'})
+            }
+    
+    except Exception as e:
+        debug_log(f"Ошибка обработчика: {e}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'status': 'error', 'message': 'Internal server error'})
+        }
+
+# Для локального тестирования (не используется в Vercel)
+if __name__ == "__main__":
+    from http.server import HTTPServer
+    class LocalHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(get_status_html().encode('utf-8'))
+        
+        def do_POST(self):
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            update = json.loads(post_data)
+            result = handle_telegram_update(update)
             
             self.send_response(200)
+            self.send_header('Content-type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps({"ok": True}).encode())
-            
-        except json.JSONDecodeError as e:
-            debug_log(f"Ошибка JSON: {e}")
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write(json.dumps({"ok": False, "error": "Invalid JSON"}).encode())
-        except Exception as e:
-            debug_log(f"Ошибка обработки запроса: {e}")
-            debug_log(f"Трассировка: {traceback.format_exc()}")
-            self.send_response(500)
-            self.end_headers()
-            self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode())
-
-# Для Vercel
-def handler(req, context):
-    """Обработчик для Vercel"""
-    return Handler()
+            self.wfile.write(json.dumps(result).encode())
+    
+    print("Запуск локального сервера на порту 8080...")
+    server = HTTPServer(('localhost', 8080), LocalHandler)
+    server.serve_forever()
