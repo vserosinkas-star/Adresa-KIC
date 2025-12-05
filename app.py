@@ -30,11 +30,6 @@ TEST_DATA = {
     },
 }
 
-# ===== УТИЛИТЫ =====
-def normalize_text(text):
-    """Нормализует текст для поиска"""
-    return re.sub(r'[^\w\s-]', '', str(text).upper()).strip()
-
 def load_google_sheets():
     """Загружает данные из Google Sheets"""
     try:
@@ -42,7 +37,6 @@ def load_google_sheets():
         if not sa_json:
             return None, "GOOGLE_SERVICE_ACCOUNT не найден"
         
-        # Декодируем base64 если нужно
         try:
             sa_json = base64.b64decode(sa_json).decode('utf-8')
         except:
@@ -50,14 +44,12 @@ def load_google_sheets():
         
         sa_info = json.loads(sa_json)
         
-        # Авторизация
         creds = Credentials.from_service_account_info(
             sa_info,
             scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
         )
         client = gspread.authorize(creds)
         
-        # Открываем таблицу
         sheet = client.open_by_key(SHEET_ID)
         worksheet = sheet.get_worksheet(0)
         all_values = worksheet.get_all_values()
@@ -65,10 +57,8 @@ def load_google_sheets():
         if len(all_values) <= 1:
             return None, "Таблица пуста"
         
-        # Заголовки
         headers = [str(h).strip().lower() for h in all_values[0]]
         
-        # Находим индексы колонок
         col_map = {}
         for i, header in enumerate(headers):
             if 'населенный пункт' in header or 'город' in header:
@@ -83,20 +73,19 @@ def load_google_sheets():
                 col_map['fio'] = i
             elif 'телефон' in header:
                 col_map['phone'] = i
-            elif 'email' in header:
+            elif 'email' в header:
                 col_map['email'] = i
         
-        # Обрабатываем данные
         data = {}
         for row in all_values[1:]:
             if len(row) == 0:
                 continue
                 
-            city_name = row[col_map.get('city', 0)].strip() if col_map.get('city') < len(row) else ""
+            city_name = row[col_map.get('city', 0)].strip() if col_map.get('city', 0) < len(row) else ""
             if not city_name:
                 continue
             
-            key = normalize_text(city_name)
+            key = re.sub(r'[^\w\s-]', '', city_name.upper()).strip()
             
             data[key] = {
                 "city": city_name,
@@ -116,13 +105,11 @@ def load_google_sheets():
 
 def find_city(data, query):
     """Ищет город в данных"""
-    query_norm = normalize_text(query)
+    query_norm = re.sub(r'[^\w\s-]', '', query.upper()).strip()
     
-    # Прямой поиск
     if query_norm in data:
         return data[query_norm]
     
-    # Поиск по частичному совпадению
     for key, city_data in data.items():
         if query_norm in key or key in query_norm:
             return city_data
@@ -143,16 +130,12 @@ def send_telegram_message(chat_id, text):
     except:
         return False
 
-# ===== ОСНОВНОЙ КОД =====
 def handler(event, context):
     """Основной обработчик для Vercel"""
     
-    # Определяем HTTP метод
     method = event.get('httpMethod', 'GET')
     
-    # Обрабатываем GET запрос (страница статуса)
     if method == 'GET':
-        # Проверяем Google Sheets
         has_google_sa = bool(os.environ.get('GOOGLE_SERVICE_ACCOUNT'))
         sheets_data, sheets_msg = load_google_sheets()
         
@@ -163,7 +146,6 @@ def handler(event, context):
             data = TEST_DATA
             source = f"тестовые данные (Google Sheets: {sheets_msg})"
         
-        # Генерируем HTML
         html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -216,25 +198,19 @@ def handler(event, context):
             'body': html
         }
     
-    # Обрабатываем POST запрос (webhook от Telegram)
     elif method == 'POST':
         try:
             body = event.get('body', '{}')
-            if isinstance(body, str):
-                update = json.loads(body)
-            else:
-                update = json.loads(body)
+            update = json.loads(body)
             
             if 'message' in update and 'text' in update['message']:
                 chat_id = update['message']['chat']['id']
                 text = update['message']['text'].strip()
                 
-                # Загружаем данные
                 sheets_data, sheets_msg = load_google_sheets()
                 data = sheets_data if sheets_data else TEST_DATA
                 source = "Google Sheets" if sheets_data else "тестовые данные"
                 
-                # Обрабатываем команды
                 if text.lower() == '/start':
                     response_text = f"""👋 <b>Привет! Я бот-куратор КИЦ</b>
 
@@ -279,7 +255,6 @@ def handler(event, context):
                         response_text = "❌ Укажите название города после /search\nПример: <code>/search Новый Уренгой</code>"
                 
                 else:
-                    # Обычный поиск
                     city = find_city(data, text)
                     if city:
                         response_text = f"""📍 <b>{city['city']}</b> ({city.get('city_type', '')})
@@ -297,7 +272,6 @@ def handler(event, context):
                             response_text += f"• <code>{data[city_name]['city']}</code>\n"
                         response_text += "\nИли используйте команду <code>/search Город</code>"
                 
-                # Отправляем ответ в Telegram
                 send_telegram_message(chat_id, response_text)
             
             return {
@@ -312,7 +286,6 @@ def handler(event, context):
                 'body': json.dumps({'ok': False, 'error': str(e)})
             }
     
-    # Неподдерживаемый метод
     else:
         return {
             'statusCode': 405,
