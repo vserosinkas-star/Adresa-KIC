@@ -8,45 +8,40 @@ import re
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 GOOGLE_SHEET_ID = "1h6dMEWsLcH--d4MB5CByx05xitOwhAGV"
 
-# Тестовые данные (резервные)
+# Тестовые данные
 TEST_DATA = {
     "KIC001": {"kic": "KIC001", "city": "Аксарка", "address": "ул. Центральная, 15", "fio": "Гранкина Елена", "phone": "8-909-198-88-42"},
     "KIC002": {"kic": "KIC002", "city": "Краснодар", "address": "ул. Ленина, 1", "fio": "Иванов Иван", "phone": "+7-918-123-45-67"},
 }
 
-def test_google_sheets():
-    """Тестирует подключение к Google Sheets"""
-    try:
-        # Проверяем наличие переменной
-        if not os.environ.get('GOOGLE_SERVICE_ACCOUNT'):
-            return False, "❌ GOOGLE_SERVICE_ACCOUNT не установлен"
-        
-        # Пробуем распарсить JSON
+def check_environment():
+    """Проверяем переменные окружения"""
+    results = []
+    
+    # Проверка BOT_TOKEN
+    if BOT_TOKEN:
+        results.append(("✅", "BOT_TOKEN установлен"))
+    else:
+        results.append(("❌", "BOT_TOKEN не установлен"))
+    
+    # Проверка GOOGLE_SERVICE_ACCOUNT
+    google_sa = os.environ.get('GOOGLE_SERVICE_ACCOUNT')
+    if google_sa:
         try:
-            sa_info = json.loads(os.environ.get('GOOGLE_SERVICE_ACCOUNT'))
-        except json.JSONDecodeError as e:
-            return False, f"❌ Ошибка в формате JSON: {str(e)[:100]}"
-        
-        # Проверяем обязательные поля
-        required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email']
-        missing_fields = [field for field in required_fields if field not in sa_info]
-        if missing_fields:
-            return False, f"❌ Отсутствуют поля в JSON: {', '.join(missing_fields)}"
-        
-        return True, f"✅ Сервисный аккаунт: {sa_info['client_email']}"
-        
-    except Exception as e:
-        return False, f"❌ Ошибка: {str(e)}"
+            # Пробуем распарсить JSON
+            sa_info = json.loads(google_sa)
+            email = sa_info.get('client_email', 'Неизвестный email')
+            results.append(("✅", f"GOOGLE_SERVICE_ACCOUNT: {email}"))
+        except:
+            results.append(("❌", "GOOGLE_SERVICE_ACCOUNT: Неверный формат JSON"))
+    else:
+        results.append(("❌", "GOOGLE_SERVICE_ACCOUNT не установлен"))
+    
+    return results
 
 def get_data():
-    """Возвращает данные и статус"""
-    test_result, test_message = test_google_sheets()
-    
-    if test_result:
-        # Пока используем тестовые данные, но с статусом "готов к Google Sheets"
-        return TEST_DATA, "готов к Google Sheets (нужен деплой)"
-    else:
-        return TEST_DATA, f"тестовые данные ({test_message})"
+    """Возвращает данные"""
+    return TEST_DATA, "тестовые данные"
 
 def send_telegram_message(chat_id, text):
     """Отправляет сообщение в Telegram"""
@@ -55,7 +50,8 @@ def send_telegram_message(chat_id, text):
         payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
         requests.post(url, json=payload, timeout=10)
         return True
-    except:
+    except Exception as e:
+        print(f"Ошибка Telegram: {e}")
         return False
 
 class Handler(BaseHTTPRequestHandler):
@@ -66,58 +62,89 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         
         data, source = get_data()
-        test_result, test_message = test_google_sheets()
+        env_checks = check_environment()
         
-        html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <title>Бот-куратор КИЦ</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }}
-                .success {{ color: green; }}
-                .error {{ color: red; }}
-                .warning {{ color: orange; }}
-                .box {{ background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 15px 0; }}
-                .json {{ background: #333; color: #fff; padding: 10px; border-radius: 5px; overflow-x: auto; font-family: monospace; font-size: 12px; }}
-                .check {{ margin-right: 10px; }}
-            </style>
-        </head>
-        <body>
-            <h1>🤖 Бот-куратор КИЦ</h1>
-            
-            <div class="box">
-                <h3>📊 Статус системы</h3>
-                <p>Бот: <span class="success">✅ Работает</span></p>
-                <p>Данные: {source}</p>
-                <p>Записей: {len(data)}</p>
-            </div>
-            
-            <div class="box">
-                <h3>🔧 Проверка Google Sheets</h3>
-                <p>{'✅' if test_result else '❌'} {test_message}</p>
-            </div>
-            
-            <div class="box">
-                <h3>📝 Примеры запросов в Telegram:</h3>
-                <p><code>/start</code> - начало работы</p>
-                <p><code>KIC001</code> - тест поиска</p>
-                <p><code>KIC002</code> - тест поиска</p>
-            </div>
-            
-            <div class="box">
-                <h3>⚙️ Настройки Vercel</h3>
-                <p>BOT_TOKEN: <span class="{'success' if BOT_TOKEN else 'error'}">
-                    {'✅ Установлен' if BOT_TOKEN else '❌ Не установлен'}
-                </span></p>
-                <p>GOOGLE_SERVICE_ACCOUNT: <span class="{'success' if os.environ.get('GOOGLE_SERVICE_ACCOUNT') else 'error'}">
-                    {'✅ Установлен' if os.environ.get('GOOGLE_SERVICE_ACCOUNT') else '❌ Не установлен'}
-                </span></p>
-            </div>
-        </body>
-        </html>
-        """
+        # Создаем HTML
+        html = '''<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Бот-куратор КИЦ</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }
+        .success { color: green; }
+        .error { color: red; }
+        .warning { color: orange; }
+        .box { background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 15px 0; }
+        code { background: #eee; padding: 2px 5px; border-radius: 3px; }
+        .instruction { background: #e8f4fc; border-left: 4px solid #2196F3; padding: 15px; margin: 15px 0; }
+        ol { margin-left: 20px; }
+        li { margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>🤖 Бот-куратор КИЦ</h1>
+    
+    <div class="box">
+        <h3>📊 Статус системы</h3>'''
+        
+        for icon, message in env_checks:
+            html += f'<p>{icon} {message}</p>'
+        
+        html += f'''
+        <p>Данные: {source}</p>
+        <p>Записей: {len(data)}</p>
+    </div>
+    
+    <div class="box">
+        <h3>📝 Примеры запросов в Telegram:</h3>
+        <p><code>/start</code> - начало работы</p>
+        <p><code>/status</code> - проверка статуса</p>
+        <p><code>KIC001</code> - тест поиска</p>
+        <p><code>KIC002</code> - тест поиска</p>
+    </div>'''
+        
+        # Показываем инструкцию, если нет GOOGLE_SERVICE_ACCOUNT
+        if not os.environ.get('GOOGLE_SERVICE_ACCOUNT'):
+            html += '''
+    <div class="instruction">
+        <h3>📖 Инструкция по добавлению Google Sheets</h3>
+        <p>Чтобы подключить Google Sheets, выполните следующие шаги:</p>
+        <ol>
+            <li><strong>Создайте JSON ключ сервисного аккаунта:</strong>
+                <br>• Зайдите в <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a>
+                <br>• Создайте сервисный аккаунт
+                <br>• Скачайте JSON ключ</li>
+            <li><strong>Добавьте переменную в Vercel:</strong>
+                <br>• Откройте проект в <a href="https://vercel.com" target="_blank">Vercel</a>
+                <br>• Settings → Environment Variables
+                <br>• Добавьте переменную:
+                <br>  <strong>Name:</strong> GOOGLE_SERVICE_ACCOUNT
+                <br>  <strong>Value:</strong> <em>весь JSON файл одной строкой</em></li>
+            <li><strong>Предоставьте доступ к таблице:</strong>
+                <br>• Откройте <a href="https://docs.google.com/spreadsheets/d/1h6dMEWsLcH--d4MB5CByx05xitOwhAGV/edit" target="_blank">таблицу</a>
+                <br>• Нажмите "Настройки доступа"
+                <br>• Добавьте email сервисного аккаунта (из JSON)
+                <br>• Дайте права "Редактор"</li>
+            <li><strong>Переразверните проект:</strong>
+                <br>• В Vercel нажмите "Deployments"
+                <br>• Выберите последний деплой
+                <br>• Нажмите "Redeploy"</li>
+        </ol>
+    </div>'''
+        
+        html += '''
+    <div class="box">
+        <h3>🔗 Полезные ссылки</h3>
+        <p><a href="https://docs.google.com/spreadsheets/d/1h6dMEWsLcH--d4MB5CByx05xitOwhAGV/edit" target="_blank">
+            📁 Открыть таблицу Google Sheets
+        </a></p>
+        <p><a href="https://vercel.com" target="_blank">
+            ⚙️ Панель управления Vercel
+        </a></p>
+    </div>
+</body>
+</html>'''
         
         self.wfile.write(html.encode('utf-8'))
     
@@ -152,18 +179,27 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     
                 elif raw_text == '/status':
-                    test_result, test_message = test_google_sheets()
-                    reply = (
-                        f"📊 <b>Статус системы:</b>\n\n"
-                        f"• Бот: ✅ Работает\n"
-                        f"• Данные: {source}\n"
-                        f"• Записей: {len(data)}\n"
-                        f"• Google Sheets: {test_message}"
-                    )
+                    env_checks = check_environment()
+                    reply = "📊 <b>Статус системы:</b>\n\n"
+                    for icon, message in env_checks:
+                        reply += f"{icon} {message}\n"
+                    reply += f"\n📁 Данные: {source}\n"
+                    reply += f"📈 Записей: {len(data)}"
                     
-                elif raw_text == '/check':
-                    test_result, test_message = test_google_sheets()
-                    reply = f"🔧 <b>Проверка Google Sheets:</b>\n\n{test_message}"
+                elif raw_text == '/help':
+                    reply = (
+                        "📚 <b>Справка по боту:</b>\n\n"
+                        "• Введите код КИЦ для поиска\n"
+                        "• Регистр и пробелы не важны\n\n"
+                        "⚙️ <b>Команды:</b>\n"
+                        "/start - начало работы\n"
+                        "/status - статус системы\n"
+                        "/help - эта справка\n\n"
+                        "💡 <b>Примеры:</b>\n"
+                        "<code>KIC001</code>\n"
+                        "<code>KIC 002</code>\n"
+                        "<code>kic-001</code>"
+                    )
                     
                 else:
                     # Ищем в данных
@@ -178,7 +214,16 @@ class Handler(BaseHTTPRequestHandler):
                             f"<i>Данные из: {source}</i>"
                         )
                     else:
-                        reply = f"❌ КИЦ <code>{raw_text}</code> не найден.\n\nДоступные тестовые коды:\n<code>KIC001</code>, <code>KIC002</code>"
+                        # Показываем доступные коды
+                        examples = []
+                        for k in list(data.keys())[:5]:
+                            examples.append(f"<code>{data[k]['kic']}</code>")
+                        
+                        reply = f"❌ КИЦ <code>{raw_text}</code> не найден.\n\n"
+                        if examples:
+                            reply += f"<b>Доступные коды:</b>\n" + "\n".join(examples)
+                        else:
+                            reply += "Нет доступных записей."
                 
                 send_telegram_message(chat_id, reply)
 
