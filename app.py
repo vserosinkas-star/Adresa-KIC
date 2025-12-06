@@ -1,85 +1,112 @@
+from http.server import BaseHTTPRequestHandler
 import json
 import os
 import requests
 
-BOT_TOKEN = os.environ.get('BOT_TOKEN', '')
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
 
-TEST_DATA = {
-    "НОВЫЙ УРЕНГОЙ": {
-        "city": "Новый Уренгой",
-        "city_type": "Город",
-        "kic": "ДО №8369/018 КИЦ Новоуренгойский",
-        "address": "629300, г. Новый Уренгой, мкр. Дружба, 3",
-        "fio": "Мохначёв Сергей Вячеславович",
-        "phone": "929-252-0303",
-        "email": "Mokhnachov.S.V@sberbank.ru"
+# Mock данные
+MOCK_DATA = {
+    "KIC001": {
+        "kic": "KIC001", "city": "Аксарка", "city_type": "село", 
+        "address": "ул. Центральная, 15", "fio": "Гранкина Елена Михайловна",
+        "phone": "8-909-198-88-42", "email": "grankina@example.com"
+        "kic": "KIC001",
+        "city": "Аксарка",
+        "city_type": "село",
+        "address": "ул. Центральная, 15",
+        "fio": "Гранкина Елена Михайловна",
+        "phone": "8-909-198-88-42",
+        "email": "grankina@example.com"
     }
 }
 
+
 def send_telegram_message(chat_id, text):
+    if not BOT_TOKEN:
+        print("⚠️ BOT_TOKEN не установлен")
+        return False
     try:
+        # 🔴 ИСПРАВЛЕНО: убраны пробелы в URL
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
-        requests.post(url, json=payload, timeout=5)
-        return True
+        payload = {"chat_id": chat_id, "text": text}
+        response = requests.post(url, json=payload, timeout=10)
+        if response.status_code != 200:
+            print(f"❌ Telegram API error: {response.status_code} — {response.text}")
+        return response.status_code == 200
     except:
+    except Exception as e:
+        print(f"⚠️ Ошибка отправки в Telegram: {e}")
         return False
 
-def handler(event, context=None):
-    method = event.get('httpMethod', 'GET')
+
+class Handler(BaseHTTPRequestHandler):
+def do_GET(self):
+    self.send_response(200)  # ← 4 пробела (или 1 таб) в начале
+    self.send_header('Content-type', 'text/plain; charset=utf-8')
+    self.end_headers()
+    self.wfile.write("✅ Бот куратор КИЦ работает! Используйте /start в Telegram".encode('utf-8'))
     
-    if method == 'GET':
-        html = '''<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>Бот-куратор КИЦ</title></head>
-<body>
-<h1>🤖 Бот-куратор КИЦ</h1>
-<p>✅ Бот работает</p>
-<p>📍 Населенных пунктов: 1</p>
-<p>🔍 В Telegram: <code>/start</code> или <code>Новый Уренгой</code></p>
-</body></html>'''
-        return {
-            'statusCode': 200,
-            'headers': {'Content-Type': 'text/html; charset=utf-8'},
-            'body': html
-        }
-    
-    elif method == 'POST':
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain; charset=utf-8')  # ✅ явная UTF-8
+        self.end_headers()
+        message = "✅ Бот куратор КИЦ работает! Используйте /start в Telegram"
+        self.wfile.write(message.encode('utf-8'))
+
+    def do_POST(self):
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        
         try:
-            body = event.get('body', '{}')
-            update = json.loads(body if isinstance(body, str) else body.decode())
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            update = json.loads(post_data)
             
+
             if 'message' in update:
                 chat_id = update['message']['chat']['id']
-                text = update['message']['text'].strip()
+                text = update['message'].get('text', '').strip()
                 
-                if text.lower() == '/start':
-                    reply = "👋 Привет! Я бот-куратор КИЦ\nВведите название города"
-                elif 'уренгой' in text.lower():
-                    city = TEST_DATA['НОВЫЙ УРЕНГОЙ']
-                    reply = f"""📍 <b>{city['city']}</b> ({city['city_type']})
-🏢 КИЦ: {city['kic']}
-📌 Адрес: {city['address']}
-👤 Ответственный: {city['fio']}
-📞 Телефон: {city['phone']}
-📧 Email: {city['email']}"""
+
+                if text == '/start':
+                    response_text = "👋 Привет! Я бот-куратор КИЦ. Введите код КИЦ (например: KIC001)"
+                    send_telegram_message(chat_id, response_text)
+                elif text.upper() in MOCK_DATA:
+                    record = MOCK_DATA[text.upper()]
+                    response_text = f"✅ КИЦ {record['kic']}\nГород: {record['city']}\nАдрес: {record['address']}\nРКИЦ: {record['fio']}\nТелефон: {record['phone']}"
+                    response_text = (
+                        f"✅ КИЦ {record['kic']}\n"
+                        f"Город: {record['city']}\n"
+                        f"Адрес: {record['address']}\n"
+                        f"РКИЦ: {record['fio']}\n"
+                        f"Телефон: {record['phone']}"
+                    )
+                    send_telegram_message(chat_id, response_text)
                 else:
-                    reply = f"❌ Город '{text}' не найден\nПопробуйте: Новый Уренгой"
-                
-                send_telegram_message(chat_id, reply)
+                    response_text = f"❌ КИЦ '{text}' не найден. Попробуйте KIC001"
+                    send_telegram_message(chat_id, response_text)
             
-            return {
-                'statusCode': 200,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({'ok': True})
-            }
+
+            # Ответ вебхуку Telegram: 200 OK
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Content-type', 'application/json; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok"}).encode())
+            
+            self.wfile.write(json.dumps({"status": "ok"}).encode('utf-8'))
+
         except Exception as e:
-            return {
-                'statusCode': 500,
-                'body': json.dumps({'ok': False, 'error': str(e)})
-            }
-    
-    return {
-        'statusCode': 405,
-        'body': json.dumps({'error': 'Method not allowed'})
-    }
+            print(f"❌ Ошибка в do_POST: {e}")
+            self.send_response(500)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Content-type', 'application/json; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e)}).encode())
+            self.wfile.write(json.dumps({"error": str(e)}).encode('utf-8'))
+
+
+# Vercel требует эту переменную
+# Vercel: точка входа
+handler = Handler
