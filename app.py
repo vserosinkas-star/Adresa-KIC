@@ -2,10 +2,8 @@ import os
 import logging
 import re
 import time
-import csv
-import io
-from flask import Flask, request, jsonify
 import requests
+from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
 # Загружаем переменные окружения
@@ -18,160 +16,92 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 BOT_TOKEN = os.environ.get('BOT_TOKEN', '8043513088:AAE8habdyEK0wlixTE34ISTr35t_mQ9vj2k')
 
+# URL для публично опубликованной таблицы (замените на ваш после публикации)
+PUBLIC_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQH5RckHh9JwG_i0qZ2oBzYbQ3n9N7VZJjZtN3X3JZ8q3jK3JpX0xV8_9VlL4b6kXp4Q1dQY8YjX/pub?gid=1532223079&single=true&output=csv"
+
 # Кэширование данных
 data_cache = None
 cache_timestamp = 0
 CACHE_DURATION = 300  # 5 минут
 
-def try_different_sheet_urls():
-    """Пробуем разные URL для доступа к таблице"""
-    
-    sheet_id = '1h6dMEWsLcH--d4MB5CByx05xitOwhAGV'
-    gid = '1532223079'  # ID листа
-    
-    urls_to_try = [
-        # Основной CSV экспорт
-        f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}",
-        f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv",
-        
-        # Публичный доступ
-        f"https://docs.google.com/spreadsheets/d/{sheet_id}/pub?gid={gid}&output=csv",
-        f"https://docs.google.com/spreadsheets/d/{sheet_id}/pub?output=csv",
-        
-        # Альтернативные форматы
-        f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&gid={gid}",
-        f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv",
-    ]
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/csv,application/csv,*/*'
-    }
-    
-    for url in urls_to_try:
-        try:
-            logger.info(f"Пробуем URL: {url}")
-            response = requests.get(url, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                logger.info(f"Успешно! Получен ответ с кодом 200 от {url}")
-                return response.text
-            else:
-                logger.warning(f"URL {url} вернул код {response.status_code}")
-                
-        except Exception as e:
-            logger.warning(f"Ошибка при загрузке с {url}: {str(e)}")
-    
-    return None
-
 def get_google_sheet_data():
-    """Получение данных из Google Sheets"""
+    """Получение данных из публично опубликованной таблицы"""
     try:
-        logger.info("Пробуем загрузить данные из Google Sheets...")
+        logger.info(f"Загружаем данные по публичному URL: {PUBLIC_SHEET_URL}")
         
-        # Пробуем разные URL
-        csv_data = try_different_sheet_urls()
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
         
-        if not csv_data:
-            logger.error("Не удалось загрузить данные ни с одного URL")
-            return []
+        response = requests.get(PUBLIC_SHEET_URL, headers=headers, timeout=15)
         
-        # Парсим CSV
-        csv_file = io.StringIO(csv_data)
-        
-        # Пробуем разные разделители
-        for delimiter in [',', ';', '\t', '|']:
-            try:
-                csv_file.seek(0)
-                dialect = csv.Sniffer().sniff(csv_file.read(1024))
-                csv_file.seek(0)
-                reader = csv.reader(csv_file, dialect)
-                break
-            except:
-                csv_file.seek(0)
-                reader = csv.reader(csv_file, delimiter=delimiter)
-                try:
-                    # Пробуем прочитать первую строку
-                    first_row = next(reader)
-                    if len(first_row) >= 3:  # Если есть хотя бы 3 столбца
-                        csv_file.seek(0)
-                        reader = csv.reader(csv_file, delimiter=delimiter)
-                        logger.info(f"Используем разделитель: {repr(delimiter)}")
-                        break
-                except:
+        if response.status_code == 200:
+            text = response.text
+            
+            if not text.strip():
+                logger.warning("Получен пустой ответ")
+                return []
+            
+            # Разделяем строки
+            lines = text.strip().split('\n')
+            logger.info(f"Получено строк: {len(lines)}")
+            
+            records = []
+            
+            for i, line in enumerate(lines):
+                # Пропускаем пустые строки
+                if not line.strip():
                     continue
-        
-        records = []
-        headers = None
-        
-        for i, row in enumerate(reader):
-            # Пропускаем пустые строки
-            if not any(cell.strip() for cell in row):
-                continue
-            
-            # Первая непустая строка - заголовок
-            if headers is None:
-                headers = row
-                logger.info(f"Заголовки: {headers}")
-                continue
-            
-            # Нормализуем количество столбцов
-            if len(row) < len(headers):
-                # Дополняем пустыми значениями
-                row = row + [''] * (len(headers) - len(row))
-            elif len(row) > len(headers):
-                # Обрезаем лишние
-                row = row[:len(headers)]
-            
-            # Ищем нужные столбцы по заголовкам
-            record = {}
-            
-            # Маппим заголовки к нашим полям
-            for idx, header in enumerate(headers):
-                header_lower = str(header).lower().strip()
                 
-                if any(keyword in header_lower for keyword in ['насел', 'город', 'мест', 'locality']):
-                    record['locality'] = row[idx].strip()
-                elif any(keyword in header_lower for keyword in ['тип', 'type', 'вид']):
-                    record['type'] = row[idx].strip()
-                elif any(keyword in header_lower for keyword in ['киц', 'kic', 'до', 'отдел']):
-                    record['kic'] = row[idx].strip()
-                elif any(keyword in header_lower for keyword in ['адрес', 'address']):
-                    record['address'] = row[idx].strip()
-                elif any(keyword in header_lower for keyword in ['фио', 'fio', 'имя', 'ркиц', 'ответств']):
-                    record['fio'] = row[idx].strip()
-                elif any(keyword in header_lower for keyword in ['тел', 'phone', 'телефон', 'контакт']):
-                    record['phone'] = row[idx].strip()
-                elif any(keyword in header_lower for keyword in ['email', 'почта', 'емайл']):
-                    record['email'] = row[idx].strip()
+                # Разделяем по запятой (CSV формат)
+                # Учитываем, что значения могут быть в кавычках
+                parts = []
+                current = ''
+                in_quotes = False
+                
+                for char in line:
+                    if char == '"':
+                        in_quotes = not in_quotes
+                    elif char == ',' and not in_quotes:
+                        parts.append(current.strip())
+                        current = ''
+                    else:
+                        current += char
+                
+                # Добавляем последнюю часть
+                parts.append(current.strip())
+                
+                # Убираем кавычки из значений
+                parts = [part.strip('"') for part in parts]
+                
+                # Если у нас минимум 7 частей
+                if len(parts) >= 7:
+                    record = {
+                        'locality': parts[0],
+                        'type': parts[1],
+                        'kic': parts[2],
+                        'address': parts[3],
+                        'fio': parts[4],
+                        'phone': parts[5],
+                        'email': parts[6]
+                    }
+                    
+                    # Проверяем, что это не заголовок и есть основные данные
+                    if i > 0 and record['locality'] and record['kic']:
+                        records.append(record)
+                        logger.debug(f"Строка {i+1}: {record['locality']} - {record['kic']}")
+                elif len(parts) > 0:
+                    # Если столбцов меньше, но есть данные
+                    logger.warning(f"Строка {i+1}: недостаточно столбцов ({len(parts)})")
             
-            # Проверяем, что у нас есть необходимые поля
-            if not record.get('locality'):
-                # Если не нашли по заголовкам, берем по порядку
-                if len(row) >= 1:
-                    record['locality'] = row[0].strip()
-            
-            if not record.get('kic'):
-                if len(row) >= 3:
-                    record['kic'] = row[2].strip()
-            
-            # Заполняем остальные поля по умолчанию
-            record.setdefault('type', row[1].strip() if len(row) > 1 else '')
-            record.setdefault('address', row[3].strip() if len(row) > 3 else '')
-            record.setdefault('fio', row[4].strip() if len(row) > 4 else '')
-            record.setdefault('phone', row[5].strip() if len(row) > 5 else '')
-            record.setdefault('email', row[6].strip() if len(row) > 6 else '')
-            
-            # Проверяем, что запись содержит основные данные
-            if record['locality'] and record['kic']:
-                records.append(record)
-                logger.debug(f"Строка {i+1}: {record['locality']} - {record['kic']}")
-        
-        if records:
-            logger.info(f"Успешно загружено {len(records)} записей из Google Sheets")
-            return records
+            if records:
+                logger.info(f"Успешно загружено {len(records)} записей")
+                return records
+            else:
+                logger.warning("Не найдено записей в данных")
+                return []
         else:
-            logger.warning("Данные загружены, но не удалось найти записи")
+            logger.error(f"Ошибка при загрузке данных: {response.status_code}")
             return []
             
     except Exception as e:
@@ -320,7 +250,7 @@ def get_data():
     
     return data_cache['locality_map'], data_cache['kic_map']
 
-# Остальная часть кода остается без изменений...
+# ... (остальной код остается таким же, как в предыдущем примере) ...
 
 def get_main_keyboard():
     """Клавиатура главного меню"""
@@ -552,6 +482,7 @@ def debug():
     
     return jsonify({
         "bot_token_exists": bool(BOT_TOKEN),
+        "public_sheet_url": PUBLIC_SHEET_URL,
         "records_count": len(locality_map),
         "kic_count": len(kic_map),
         "cache_age_seconds": int(time.time() - cache_timestamp) if data_cache else None,
