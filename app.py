@@ -5,8 +5,6 @@ import time
 import json
 from flask import Flask, request, jsonify
 import requests
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 from dotenv import load_dotenv
 
 # Загружаем переменные окружения
@@ -21,153 +19,166 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN', '8043513088:AAE8habdyEK0wlixTE34ISTr35t_
 
 # Конфигурация Google Sheets
 GOOGLE_SHEET_ID = '1h6dMEWsLcH--d4MB5CByx05xitOwhAGV'
-SHEET_NAME = 'Общий'  # Название листа
+GOOGLE_SHEETS_API_KEY = os.environ.get('GOOGLE_SHEETS_API_KEY', '')
 
 # Кэширование данных
 data_cache = None
 cache_timestamp = 0
 CACHE_DURATION = 300  # 5 минут
 
-def authenticate_google_sheets():
-    """Аутентификация в Google Sheets API"""
+def get_google_sheet_data():
+    """Получение данных из Google Sheets через API"""
     try:
-        # Получаем учетные данные из переменных окружения
-        credentials_json = os.environ.get('GOOGLE_CREDENTIALS')
+        # Формируем URL для получения данных
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEET_ID}/values/Общий"
         
-        if not credentials_json:
-            logger.error("GOOGLE_CREDENTIALS не установлены в переменных окружения")
-            return None
+        params = {}
+        if GOOGLE_SHEETS_API_KEY:
+            params['key'] = GOOGLE_SHEETS_API_KEY
         
-        # Парсим JSON из строки
-        credentials_dict = json.loads(credentials_json)
+        logger.info(f"Загружаем данные из Google Sheets: {url}")
         
-        # Создаем учетные данные
-        scope = ['https://spreadsheets.google.com/feeds',
-                'https://www.googleapis.com/auth/drive']
+        response = requests.get(url, params=params, timeout=10)
         
-        credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
-        
-        # Авторизуемся
-        client = gspread.authorize(credentials)
-        
-        logger.info("Успешная аутентификация в Google Sheets API")
-        return client
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"Ошибка парсинга GOOGLE_CREDENTIALS JSON: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Ошибка аутентификации в Google Sheets API: {e}")
-        return None
-
-def load_data_from_google_sheets():
-    """Загрузка данных из Google Sheets"""
-    try:
-        client = authenticate_google_sheets()
-        
-        if not client:
-            logger.error("Не удалось аутентифицироваться в Google Sheets")
-            return []
-        
-        # Открываем таблицу
-        sheet = client.open_by_key(GOOGLE_SHEET_ID)
-        
-        try:
-            # Пытаемся открыть лист по имени
-            worksheet = sheet.worksheet(SHEET_NAME)
-            logger.info(f"Найден лист: {SHEET_NAME}")
-        except gspread.exceptions.WorksheetNotFound:
-            # Если лист не найден, берем первый лист
-            logger.warning(f"Лист '{SHEET_NAME}' не найден, использую первый лист")
-            worksheet = sheet.get_worksheet(0)
-            logger.info(f"Использую лист: {worksheet.title}")
-        
-        # Получаем все данные
-        data = worksheet.get_all_records()
-        
-        # Если таблица пустая
-        if not data:
-            logger.warning("Таблица пустая")
-            return []
-        
-        records = []
-        
-        # Определяем заголовки таблицы (первая строка)
-        headers = worksheet.row_values(1)
-        logger.info(f"Заголовки таблицы: {headers}")
-        
-        # Создаем словарь для сопоставления русских названий заголовков с английскими
-        header_mapping = {}
-        for header in headers:
-            header_lower = header.lower().strip()
-            if 'населен' in header_lower:
-                header_mapping['locality'] = header
-            elif 'тип' in header_lower:
-                header_mapping['type'] = header
-            elif 'киц' in header_lower or 'до' in header_lower:
-                header_mapping['kic'] = header
-            elif 'адрес' in header_lower:
-                header_mapping['address'] = header
-            elif 'фио' in header_lower or 'ркиц' in header_lower:
-                header_mapping['fio'] = header
-            elif 'телефон' in header_lower or 'тел' in header_lower:
-                header_mapping['phone'] = header
-            elif 'email' in header_lower or 'почта' in header_lower:
-                header_mapping['email'] = header
-        
-        logger.info(f"Сопоставление заголовков: {header_mapping}")
-        
-        for i, row in enumerate(data, start=2):  # i=2, потому что первая строка - заголовки
-            try:
-                # Создаем словарь для текущей строки
-                record = {}
-                
-                # Получаем значения по соответствующим заголовкам
-                locality = row.get(header_mapping.get('locality', ''), '')
-                type_ = row.get(header_mapping.get('type', ''), '')
-                kic = row.get(header_mapping.get('kic', ''), '')
-                address = row.get(header_mapping.get('address', ''), '')
-                fio = row.get(header_mapping.get('fio', ''), '')
-                phone = row.get(header_mapping.get('phone', ''), '')
-                email = row.get(header_mapping.get('email', ''), '')
-                
-                # Преобразуем в строки и очищаем
-                record = {
-                    'locality': str(locality).strip() if locality else '',
-                    'type': str(type_).strip() if type_ else '',
-                    'kic': str(kic).strip() if kic else '',
-                    'address': str(address).strip() if address else '',
-                    'fio': str(fio).strip() if fio else '',
-                    'phone': str(phone).strip() if phone else '',
-                    'email': str(email).strip() if email else ''
-                }
-                
-                # Проверяем, что запись содержит основные данные
-                if record['locality'] and record['kic']:
-                    records.append(record)
-                else:
-                    # Логируем строки без основных данных
-                    if record['locality'] or record['kic']:
-                        logger.warning(f"Строка {i}: Пропущена - не хватает основных данных: {record}")
-                    
-            except Exception as e:
-                logger.error(f"Ошибка обработки строки {i}: {e}")
-                continue
-        
-        logger.info(f"Загружено {len(records)} записей из Google Sheets")
-        
-        # Логируем первые 3 записи для проверки
-        if records:
-            for i, record in enumerate(records[:3]):
-                logger.info(f"Запись {i+1}: {record['locality']} - {record['kic']}")
+        if response.status_code == 200:
+            data = response.json()
+            values = data.get('values', [])
+            
+            if not values:
+                logger.warning("Google Sheets вернула пустые данные")
+                return []
+            
+            logger.info(f"Получено {len(values)} строк из Google Sheets")
+            
+            # Обрабатываем данные
+            return process_sheet_data(values)
+            
+        elif response.status_code == 404:
+            # Попробуем получить первый лист, если лист "Общий" не найден
+            logger.warning("Лист 'Общий' не найден, пытаемся получить первый лист")
+            return get_first_sheet_data()
+            
         else:
-            logger.warning("Нет записей для обработки")
-        
-        return records
+            logger.error(f"Ошибка при загрузке данных: {response.status_code}")
+            logger.error(f"Ответ: {response.text}")
+            return []
             
     except Exception as e:
         logger.error(f"Исключение при загрузке данных из Google Sheets: {str(e)}", exc_info=True)
         return []
+
+def get_first_sheet_data():
+    """Получение данных из первого листа"""
+    try:
+        # Сначала получаем информацию о листах
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEET_ID}"
+        
+        params = {}
+        if GOOGLE_SHEETS_API_KEY:
+            params['key'] = GOOGLE_SHEETS_API_KEY
+        
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            sheets = data.get('sheets', [])
+            
+            if sheets:
+                # Берем первый лист
+                first_sheet = sheets[0]
+                sheet_name = first_sheet['properties']['title']
+                logger.info(f"Используем лист: {sheet_name}")
+                
+                # Получаем данные из первого листа
+                url = f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEET_ID}/values/{sheet_name}"
+                response = requests.get(url, params=params, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    values = data.get('values', [])
+                    
+                    if values:
+                        logger.info(f"Получено {len(values)} строк из листа {sheet_name}")
+                        return process_sheet_data(values)
+        
+        logger.warning("Не удалось получить данные из первого листа")
+        return []
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении первого листа: {str(e)}")
+        return []
+
+def process_sheet_data(values):
+    """Обработка данных из Google Sheets"""
+    records = []
+    
+    if not values:
+        return records
+    
+    # Определяем заголовки
+    headers = values[0]
+    logger.info(f"Заголовки: {headers}")
+    
+    # Создаем маппинг заголовков на наши поля
+    header_mapping = {}
+    for i, header in enumerate(headers):
+        header_lower = str(header).lower().strip()
+        if 'населен' in header_lower:
+            header_mapping['locality'] = i
+        elif 'тип' in header_lower:
+            header_mapping['type'] = i
+        elif 'киц' in header_lower or 'до' in header_lower:
+            header_mapping['kic'] = i
+        elif 'адрес' in header_lower:
+            header_mapping['address'] = i
+        elif 'фио' in header_lower or 'ркиц' in header_lower:
+            header_mapping['fio'] = i
+        elif 'телефон' in header_lower or 'тел' in header_lower:
+            header_mapping['phone'] = i
+        elif 'email' in header_lower or 'почта' in header_lower:
+            header_mapping['email'] = i
+    
+    logger.info(f"Маппинг заголовков: {header_mapping}")
+    
+    # Обрабатываем строки данных (начиная со второй строки)
+    for i, row in enumerate(values[1:], start=2):
+        try:
+            # Проверяем, что строка не пустая
+            if not any(cell for cell in row if cell and str(cell).strip()):
+                continue
+            
+            # Получаем значения по индексам
+            locality = row[header_mapping.get('locality', 0)] if header_mapping.get('locality') < len(row) else ''
+            type_ = row[header_mapping.get('type', 1)] if header_mapping.get('type') < len(row) else ''
+            kic = row[header_mapping.get('kic', 2)] if header_mapping.get('kic') < len(row) else ''
+            address = row[header_mapping.get('address', 3)] if header_mapping.get('address') < len(row) else ''
+            fio = row[header_mapping.get('fio', 4)] if header_mapping.get('fio') < len(row) else ''
+            phone = row[header_mapping.get('phone', 5)] if header_mapping.get('phone') < len(row) else ''
+            email = row[header_mapping.get('email', 6)] if header_mapping.get('email') < len(row) else ''
+            
+            # Создаем запись
+            record = {
+                'locality': str(locality).strip() if locality else '',
+                'type': str(type_).strip() if type_ else '',
+                'kic': str(kic).strip() if kic else '',
+                'address': str(address).strip() if address else '',
+                'fio': str(fio).strip() if fio else '',
+                'phone': str(phone).strip() if phone else '',
+                'email': str(email).strip() if email else ''
+            }
+            
+            # Проверяем, что запись содержит основные данные
+            if record['locality'] and record['kic']:
+                records.append(record)
+            else:
+                logger.debug(f"Строка {i}: Пропущена - не хватает основных данных")
+                
+        except Exception as e:
+            logger.warning(f"Ошибка обработки строки {i}: {e}")
+            continue
+    
+    logger.info(f"Обработано {len(records)} записей")
+    return records
 
 def get_backup_data():
     """Резервные данные на случай недоступности Google Sheets"""
@@ -207,7 +218,7 @@ def get_data():
         logger.info("Обновление кэша данных...")
         
         # Загружаем данные из Google Sheets
-        data = load_data_from_google_sheets()
+        data = get_google_sheet_data()
         
         # Если не удалось загрузить из Google Sheets, используем резервные данные
         if not data:
@@ -237,14 +248,6 @@ def get_data():
                     if kic_code not in kic_map:
                         kic_map[kic_code] = []
                     kic_map[kic_code].append(record)
-                else:
-                    # Если не нашли код в формате 1234/567, пытаемся найти любой код
-                    any_code_match = re.search(r'(\d{4,5}[-/]\d{2,4})', record['kic'])
-                    if any_code_match:
-                        kic_code = any_code_match.group(1)
-                        if kic_code not in kic_map:
-                            kic_map[kic_code] = []
-                        kic_map[kic_code].append(record)
         
         data_cache = {
             'locality_map': locality_map,
@@ -259,6 +262,9 @@ def get_data():
         logger.info(f"Источник данных: {data_cache['source']}")
     
     return data_cache['locality_map'], data_cache['kic_map']
+
+# Остальная часть кода остается без изменений...
+# (get_main_keyboard, get_localities_keyboard, маршруты Flask и т.д.)
 
 def get_main_keyboard():
     """Клавиатура главного меню"""
@@ -505,9 +511,8 @@ def debug():
     
     return jsonify({
         "bot_token_exists": bool(BOT_TOKEN),
-        "google_credentials_exists": bool(os.environ.get('GOOGLE_CREDENTIALS')),
+        "google_sheets_api_key_exists": bool(GOOGLE_SHEETS_API_KEY),
         "sheet_id": GOOGLE_SHEET_ID,
-        "sheet_name": SHEET_NAME,
         "records_count": len(locality_map),
         "kic_count": len(kic_map),
         "cache_age_seconds": int(time.time() - cache_timestamp) if data_cache else None,
