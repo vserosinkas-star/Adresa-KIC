@@ -3,9 +3,11 @@ import logging
 import re
 import time
 import json
+import csv
 from flask import Flask, request, jsonify
 import requests
 from dotenv import load_dotenv
+from urllib.parse import quote
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -19,166 +21,105 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN', '8043513088:AAE8habdyEK0wlixTE34ISTr35t_
 
 # Конфигурация Google Sheets
 GOOGLE_SHEET_ID = '1h6dMEWsLcH--d4MB5CByx05xitOwhAGV'
-GOOGLE_SHEETS_API_KEY = os.environ.get('GOOGLE_SHEETS_API_KEY', '')
 
 # Кэширование данных
 data_cache = None
 cache_timestamp = 0
 CACHE_DURATION = 300  # 5 минут
 
-def get_google_sheet_data():
-    """Получение данных из Google Sheets через API"""
+def get_google_sheet_data_simple():
+    """Упрощенный способ получения данных из Google Sheets через публичный CSV"""
     try:
-        # Формируем URL для получения данных
-        url = f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEET_ID}/values/Общий"
+        # Способ 1: Через публичный CSV экспорт
+        url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv"
         
-        params = {}
-        if GOOGLE_SHEETS_API_KEY:
-            params['key'] = GOOGLE_SHEETS_API_KEY
+        logger.info(f"Пробуем загрузить данные через CSV: {url}")
         
-        logger.info(f"Загружаем данные из Google Sheets: {url}")
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
         
-        response = requests.get(url, params=params, timeout=10)
+        response = requests.get(url, headers=headers, timeout=15)
         
-        if response.status_code == 200:
-            data = response.json()
-            values = data.get('values', [])
+        if response.status_code == 200 and response.text.strip():
+            # Парсим CSV
+            csv_data = response.text
+            csv_reader = csv.reader(csv_data.strip().split('\n'))
             
-            if not values:
-                logger.warning("Google Sheets вернула пустые данные")
-                return []
-            
-            logger.info(f"Получено {len(values)} строк из Google Sheets")
-            
-            # Обрабатываем данные
-            return process_sheet_data(values)
-            
-        elif response.status_code == 404:
-            # Попробуем получить первый лист, если лист "Общий" не найден
-            logger.warning("Лист 'Общий' не найден, пытаемся получить первый лист")
-            return get_first_sheet_data()
-            
-        else:
-            logger.error(f"Ошибка при загрузке данных: {response.status_code}")
-            logger.error(f"Ответ: {response.text}")
-            return []
-            
-    except Exception as e:
-        logger.error(f"Исключение при загрузке данных из Google Sheets: {str(e)}", exc_info=True)
-        return []
-
-def get_first_sheet_data():
-    """Получение данных из первого листа"""
-    try:
-        # Сначала получаем информацию о листах
-        url = f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEET_ID}"
-        
-        params = {}
-        if GOOGLE_SHEETS_API_KEY:
-            params['key'] = GOOGLE_SHEETS_API_KEY
-        
-        response = requests.get(url, params=params, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            sheets = data.get('sheets', [])
-            
-            if sheets:
-                # Берем первый лист
-                first_sheet = sheets[0]
-                sheet_name = first_sheet['properties']['title']
-                logger.info(f"Используем лист: {sheet_name}")
+            records = []
+            for i, row in enumerate(csv_reader):
+                # Пропускаем пустые строки
+                if not any(cell.strip() for cell in row):
+                    continue
                 
-                # Получаем данные из первого листа
-                url = f"https://sheets.googleapis.com/v4/spreadsheets/{GOOGLE_SHEET_ID}/values/{sheet_name}"
-                response = requests.get(url, params=params, timeout=10)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    values = data.get('values', [])
+                # Определяем количество столбцов
+                if len(row) >= 7:
+                    record = {
+                        'locality': row[0].strip(),
+                        'type': row[1].strip(),
+                        'kic': row[2].strip(),
+                        'address': row[3].strip(),
+                        'fio': row[4].strip(),
+                        'phone': row[5].strip(),
+                        'email': row[6].strip()
+                    }
                     
-                    if values:
-                        logger.info(f"Получено {len(values)} строк из листа {sheet_name}")
-                        return process_sheet_data(values)
+                    # Проверяем, что это не заголовок
+                    if i > 0 and record['locality'] and record['kic']:
+                        records.append(record)
+            
+            if records:
+                logger.info(f"Успешно загружено {len(records)} записей через CSV")
+                return records
+            else:
+                logger.warning("CSV загружен, но записи не найдены")
+        else:
+            logger.warning(f"CSV экспорт не удался: {response.status_code}")
         
-        logger.warning("Не удалось получить данные из первого листа")
-        return []
+        # Способ 2: Через публичную HTML версию
+        logger.info("Пробуем получить данные через публичную HTML версию...")
+        return get_data_alternative_method()
         
     except Exception as e:
-        logger.error(f"Ошибка при получении первого листа: {str(e)}")
+        logger.error(f"Ошибка при загрузке CSV: {str(e)}")
         return []
 
-def process_sheet_data(values):
-    """Обработка данных из Google Sheets"""
-    records = []
-    
-    if not values:
-        return records
-    
-    # Определяем заголовки
-    headers = values[0]
-    logger.info(f"Заголовки: {headers}")
-    
-    # Создаем маппинг заголовков на наши поля
-    header_mapping = {}
-    for i, header in enumerate(headers):
-        header_lower = str(header).lower().strip()
-        if 'населен' in header_lower:
-            header_mapping['locality'] = i
-        elif 'тип' in header_lower:
-            header_mapping['type'] = i
-        elif 'киц' in header_lower or 'до' in header_lower:
-            header_mapping['kic'] = i
-        elif 'адрес' in header_lower:
-            header_mapping['address'] = i
-        elif 'фио' in header_lower or 'ркиц' in header_lower:
-            header_mapping['fio'] = i
-        elif 'телефон' in header_lower or 'тел' in header_lower:
-            header_mapping['phone'] = i
-        elif 'email' in header_lower or 'почта' in header_lower:
-            header_mapping['email'] = i
-    
-    logger.info(f"Маппинг заголовков: {header_mapping}")
-    
-    # Обрабатываем строки данных (начиная со второй строки)
-    for i, row in enumerate(values[1:], start=2):
-        try:
-            # Проверяем, что строка не пустая
-            if not any(cell for cell in row if cell and str(cell).strip()):
-                continue
+def get_data_alternative_method():
+    """Альтернативный способ получения данных"""
+    try:
+        # Пробуем получить данные через другой метод
+        url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv"
+        
+        response = requests.get(url, timeout=15)
+        
+        if response.status_code == 200 and response.text.strip():
+            csv_data = response.text
+            csv_reader = csv.reader(csv_data.strip().split('\n'))
             
-            # Получаем значения по индексам
-            locality = row[header_mapping.get('locality', 0)] if header_mapping.get('locality') < len(row) else ''
-            type_ = row[header_mapping.get('type', 1)] if header_mapping.get('type') < len(row) else ''
-            kic = row[header_mapping.get('kic', 2)] if header_mapping.get('kic') < len(row) else ''
-            address = row[header_mapping.get('address', 3)] if header_mapping.get('address') < len(row) else ''
-            fio = row[header_mapping.get('fio', 4)] if header_mapping.get('fio') < len(row) else ''
-            phone = row[header_mapping.get('phone', 5)] if header_mapping.get('phone') < len(row) else ''
-            email = row[header_mapping.get('email', 6)] if header_mapping.get('email') < len(row) else ''
+            records = []
+            for i, row in enumerate(csv_reader):
+                if len(row) >= 7 and i > 0:  # Пропускаем заголовок
+                    record = {
+                        'locality': row[0].strip(),
+                        'type': row[1].strip(),
+                        'kic': row[2].strip(),
+                        'address': row[3].strip(),
+                        'fio': row[4].strip(),
+                        'phone': row[5].strip(),
+                        'email': row[6].strip()
+                    }
+                    
+                    if record['locality'] and record['kic']:
+                        records.append(record)
             
-            # Создаем запись
-            record = {
-                'locality': str(locality).strip() if locality else '',
-                'type': str(type_).strip() if type_ else '',
-                'kic': str(kic).strip() if kic else '',
-                'address': str(address).strip() if address else '',
-                'fio': str(fio).strip() if fio else '',
-                'phone': str(phone).strip() if phone else '',
-                'email': str(email).strip() if email else ''
-            }
-            
-            # Проверяем, что запись содержит основные данные
-            if record['locality'] and record['kic']:
-                records.append(record)
-            else:
-                logger.debug(f"Строка {i}: Пропущена - не хватает основных данных")
+            if records:
+                logger.info(f"Загружено {len(records)} записей через альтернативный метод")
+                return records
                 
-        except Exception as e:
-            logger.warning(f"Ошибка обработки строки {i}: {e}")
-            continue
+    except Exception as e:
+        logger.error(f"Ошибка в альтернативном методе: {str(e)}")
     
-    logger.info(f"Обработано {len(records)} записей")
-    return records
+    return []
 
 def get_backup_data():
     """Резервные данные на случай недоступности Google Sheets"""
@@ -218,7 +159,7 @@ def get_data():
         logger.info("Обновление кэша данных...")
         
         # Загружаем данные из Google Sheets
-        data = get_google_sheet_data()
+        data = get_google_sheet_data_simple()
         
         # Если не удалось загрузить из Google Sheets, используем резервные данные
         if not data:
@@ -262,9 +203,6 @@ def get_data():
         logger.info(f"Источник данных: {data_cache['source']}")
     
     return data_cache['locality_map'], data_cache['kic_map']
-
-# Остальная часть кода остается без изменений...
-# (get_main_keyboard, get_localities_keyboard, маршруты Flask и т.д.)
 
 def get_main_keyboard():
     """Клавиатура главного меню"""
@@ -511,7 +449,6 @@ def debug():
     
     return jsonify({
         "bot_token_exists": bool(BOT_TOKEN),
-        "google_sheets_api_key_exists": bool(GOOGLE_SHEETS_API_KEY),
         "sheet_id": GOOGLE_SHEET_ID,
         "records_count": len(locality_map),
         "kic_count": len(kic_map),
