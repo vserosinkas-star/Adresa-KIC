@@ -2,8 +2,10 @@ import os
 import logging
 import re
 import time
-import requests
+import csv
+import io
 from flask import Flask, request, jsonify
+import requests
 from dotenv import load_dotenv
 
 # Загружаем переменные окружения
@@ -16,8 +18,12 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 BOT_TOKEN = os.environ.get('BOT_TOKEN', '8043513088:AAE8habdyEK0wlixTE34ISTr35t_mQ9vj2k')
 
-# URL для публично опубликованной таблицы (замените на ваш после публикации)
-PUBLIC_SHEET_URL = "https://docs.google.com/spreadsheets/d/1h6dMEWsLcH--d4MB5CByx05xitOwhAGV/edit?usp=sharing&ouid=115696317720603768219&rtpof=true&sd=true"
+# URL для Google Sheets - используем CSV экспорт
+GOOGLE_SHEET_ID = '1h6dMEWsLcH--d4MB5CByx05xitOwhAGV'
+GOOGLE_SHEET_GID = '1532223079'  # ID листа "Общий"
+
+# Формируем правильный URL для CSV экспорта
+PUBLIC_SHEET_URL = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&gid={GOOGLE_SHEET_GID}"
 
 # Кэширование данных
 data_cache = None
@@ -25,9 +31,9 @@ cache_timestamp = 0
 CACHE_DURATION = 300  # 5 минут
 
 def get_google_sheet_data():
-    """Получение данных из публично опубликованной таблицы"""
+    """Получение данных из Google Sheets через CSV экспорт"""
     try:
-        logger.info(f"Загружаем данные по публичному URL: {PUBLIC_SHEET_URL}")
+        logger.info(f"Загружаем данные по URL: {PUBLIC_SHEET_URL}")
         
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -36,77 +42,166 @@ def get_google_sheet_data():
         response = requests.get(PUBLIC_SHEET_URL, headers=headers, timeout=15)
         
         if response.status_code == 200:
-            text = response.text
+            # Проверяем, что это действительно CSV
+            content_type = response.headers.get('Content-Type', '').lower()
+            content = response.text[:200]  # Первые 200 символов для проверки
             
-            if not text.strip():
-                logger.warning("Получен пустой ответ")
+            logger.info(f"Content-Type: {content_type}")
+            logger.info(f"Первые 200 символов ответа: {content}")
+            
+            if 'html' in content_type or '<html' in content.lower() or '<!doctype' in content.lower():
+                logger.error("Получен HTML вместо CSV. Таблица вероятно требует авторизации.")
                 return []
             
-            # Разделяем строки
-            lines = text.strip().split('\n')
-            logger.info(f"Получено строк: {len(lines)}")
+            # Пробуем разные кодировки
+            encodings = ['utf-8', 'cp1251', 'windows-1251', 'iso-8859-1']
             
-            records = []
-            
-            for i, line in enumerate(lines):
-                # Пропускаем пустые строки
-                if not line.strip():
+            for encoding in encodings:
+                try:
+                    decoded_text = response.content.decode(encoding)
+                    break
+                except UnicodeDecodeError:
                     continue
-                
-                # Разделяем по запятой (CSV формат)
-                # Учитываем, что значения могут быть в кавычках
-                parts = []
-                current = ''
-                in_quotes = False
-                
-                for char in line:
-                    if char == '"':
-                        in_quotes = not in_quotes
-                    elif char == ',' and not in_quotes:
-                        parts.append(current.strip())
-                        current = ''
-                    else:
-                        current += char
-                
-                # Добавляем последнюю часть
-                parts.append(current.strip())
-                
-                # Убираем кавычки из значений
-                parts = [part.strip('"') for part in parts]
-                
-                # Если у нас минимум 7 частей
-                if len(parts) >= 7:
-                    record = {
-                        'locality': parts[0],
-                        'type': parts[1],
-                        'kic': parts[2],
-                        'address': parts[3],
-                        'fio': parts[4],
-                        'phone': parts[5],
-                        'email': parts[6]
-                    }
-                    
-                    # Проверяем, что это не заголовок и есть основные данные
-                    if i > 0 and record['locality'] and record['kic']:
-                        records.append(record)
-                        logger.debug(f"Строка {i+1}: {record['locality']} - {record['kic']}")
-                elif len(parts) > 0:
-                    # Если столбцов меньше, но есть данные
-                    logger.warning(f"Строка {i+1}: недостаточно столбцов ({len(parts)})")
-            
-            if records:
-                logger.info(f"Успешно загружено {len(records)} записей")
-                return records
             else:
-                logger.warning("Не найдено записей в данных")
-                return []
+                decoded_text = response.text
+            
+            # Парсим CSV
+            try:
+                # Используем StringIO для csv.reader
+                csv_data = io.StringIO(decoded_text)
+                
+                # Автоматически определяем разделитель
+                sample = csv_data.read(1024)
+                csv_data.seek(0)
+                
+                # Пробуем разные разделители
+                for delimiter in [',', ';', '\t']:
+                    csv_data.seek(0)
+                    try:
+                        reader = csv.reader(csv_data, delimiter=delimiter)
+                        rows = list(reader)
+                        if len(rows) > 1:
+                            logger.info(f"Успешно распарсено с разделителем '{delimiter}': {len(rows)} строк")
+                            return process_csv_rows(rows)
+                    except Exception as e:
+                        logger.debug(f"Разделитель '{delimiter}' не подошел: {e}")
+                        continue
+                
+                # Если не получилось, пробуем простой парсинг
+                logger.info("Пробуем простой парсинг CSV...")
+                return parse_csv_simple(decoded_text)
+                
+            except Exception as e:
+                logger.error(f"Ошибка парсинга CSV: {e}")
+                return parse_csv_simple(decoded_text)
+                
         else:
             logger.error(f"Ошибка при загрузке данных: {response.status_code}")
+            logger.error(f"Ответ: {response.text[:500]}")
             return []
             
     except Exception as e:
         logger.error(f"Исключение при загрузке данных: {str(e)}", exc_info=True)
         return []
+
+def parse_csv_simple(csv_text):
+    """Простой парсинг CSV"""
+    lines = csv_text.strip().split('\n')
+    records = []
+    
+    for i, line in enumerate(lines):
+        # Пропускаем пустые строки
+        if not line.strip():
+            continue
+        
+        # Разделяем строку, учитывая кавычки
+        parts = []
+        current_part = ''
+        in_quotes = False
+        
+        for char in line:
+            if char == '"':
+                in_quotes = not in_quotes
+            elif char == ',' and not in_quotes:
+                parts.append(current_part.strip())
+                current_part = ''
+            else:
+                current_part += char
+        
+        # Добавляем последнюю часть
+        parts.append(current_part.strip())
+        
+        # Убираем кавычки
+        parts = [part.strip('"') for part in parts]
+        
+        # Пропускаем заголовок
+        if i == 0 and any(header in ' '.join(parts).lower() for header in ['населен', 'locality', 'город', 'населённый']):
+            logger.info(f"Пропускаем заголовок: {parts}")
+            continue
+        
+        # Нужно минимум 3 столбца: населенный пункт, тип, КИЦ
+        if len(parts) >= 3:
+            record = {
+                'locality': parts[0],
+                'type': parts[1] if len(parts) > 1 else '',
+                'kic': parts[2] if len(parts) > 2 else '',
+                'address': parts[3] if len(parts) > 3 else '',
+                'fio': parts[4] if len(parts) > 4 else '',
+                'phone': parts[5] if len(parts) > 5 else '',
+                'email': parts[6] if len(parts) > 6 else ''
+            }
+            
+            # Проверяем, что это реальные данные, а не случайный текст
+            if (record['locality'] and len(record['locality']) < 100 and 
+                not any(keyword in record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if(', 'for('])):
+                
+                # Логируем первые несколько записей
+                if len(records) < 3:
+                    logger.info(f"Найдена запись: {record['locality']}")
+                
+                records.append(record)
+    
+    logger.info(f"Простой парсинг нашел {len(records)} записей")
+    return records
+
+def process_csv_rows(rows):
+    """Обработка строк CSV"""
+    records = []
+    
+    for i, row in enumerate(rows):
+        # Пропускаем пустые строки
+        if not any(cell.strip() for cell in row):
+            continue
+        
+        # Пропускаем заголовок
+        if i == 0 and any(header in ' '.join(row).lower() for header in ['населен', 'locality', 'город', 'населённый']):
+            logger.info(f"Заголовок CSV: {row}")
+            continue
+        
+        # Нужно минимум 3 столбца
+        if len(row) >= 3:
+            record = {
+                'locality': row[0].strip(),
+                'type': row[1].strip() if len(row) > 1 else '',
+                'kic': row[2].strip() if len(row) > 2 else '',
+                'address': row[3].strip() if len(row) > 3 else '',
+                'fio': row[4].strip() if len(row) > 4 else '',
+                'phone': row[5].strip() if len(row) > 5 else '',
+                'email': row[6].strip() if len(row) > 6 else ''
+            }
+            
+            # Проверяем, что это реальные данные
+            if (record['locality'] and len(record['locality']) < 100 and 
+                not any(keyword in record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if(', 'for('])):
+                
+                # Логируем первые несколько записей
+                if len(records) < 3:
+                    logger.info(f"Найдена запись (CSV): {record['locality']}")
+                
+                records.append(record)
+    
+    logger.info(f"CSV парсинг нашел {len(records)} записей")
+    return records
 
 def get_backup_data():
     """Резервные данные"""
@@ -217,24 +312,33 @@ def get_data():
         kic_map = {}
         
         for record in data:
-            locality_lower = record['locality'].lower()
-            locality_map[locality_lower] = record
+            # Очищаем и нормализуем данные
+            record['locality'] = record['locality'].strip()
+            record['type'] = record['type'].strip()
+            record['kic'] = record['kic'].strip()
             
-            # Извлекаем код КИЦ
-            kic_match = re.search(r'№\s*(\d+/\d+)', record['kic'])
-            if kic_match:
-                kic_code = kic_match.group(1)
-                if kic_code not in kic_map:
-                    kic_map[kic_code] = []
-                kic_map[kic_code].append(record)
-            else:
-                # Альтернативный поиск кода КИЦ
-                alt_match = re.search(r'(\d+/\d+)', record['kic'])
-                if alt_match:
-                    kic_code = alt_match.group(1)
+            # Проверяем, что это реальный населенный пункт, а не JS код
+            if (record['locality'] and len(record['locality']) < 50 and 
+                not any(keyword in record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if(', 'for('])):
+                
+                locality_lower = record['locality'].lower()
+                locality_map[locality_lower] = record
+                
+                # Извлекаем код КИЦ
+                kic_match = re.search(r'№\s*(\d+/\d+)', record['kic'])
+                if kic_match:
+                    kic_code = kic_match.group(1)
                     if kic_code not in kic_map:
                         kic_map[kic_code] = []
                     kic_map[kic_code].append(record)
+                else:
+                    # Альтернативный поиск кода КИЦ
+                    alt_match = re.search(r'(\d+/\d+)', record['kic'])
+                    if alt_match:
+                        kic_code = alt_match.group(1)
+                        if kic_code not in kic_map:
+                            kic_map[kic_code] = []
+                        kic_map[kic_code].append(record)
         
         data_cache = {
             'locality_map': locality_map,
@@ -245,12 +349,12 @@ def get_data():
         }
         
         cache_timestamp = current_time
-        logger.info(f"Данные загружены: {len(data)} записей")
+        logger.info(f"Данные загружены: {len(locality_map)} населенных пунктов, {len(kic_map)} КИЦ")
         logger.info(f"Источник данных: {data_cache['source']}")
     
     return data_cache['locality_map'], data_cache['kic_map']
 
-# ... (остальной код остается таким же, как в предыдущем примере) ...
+# ... (остальной код остается таким же, как в предыдущих примерах) ...
 
 def get_main_keyboard():
     """Клавиатура главного меню"""
@@ -268,7 +372,15 @@ def get_localities_keyboard():
     """Клавиатура с популярными населенными пунктами"""
     locality_map, _ = get_data()
     
-    localities = list(locality_map.keys())[:12]
+    # Фильтруем только реальные населенные пункты
+    real_localities = []
+    for locality_key, record in locality_map.items():
+        if (record['locality'] and len(record['locality']) < 50 and 
+            not any(keyword in record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if('])):
+            real_localities.append(locality_key)
+    
+    # Берем первые 12 реальных населенных пунктов
+    localities = real_localities[:12]
     
     keyboard = []
     row = []
@@ -361,19 +473,29 @@ def webhook():
                 locality_map, kic_map = get_data()
                 source = data_cache['source'] if data_cache and 'source' in data_cache else 'unknown'
                 
+                # Считаем только реальные записи
+                real_records = 0
+                example_records = []
+                
+                for record in locality_map.values():
+                    if (record['locality'] and len(record['locality']) < 50 and 
+                        not any(keyword in record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if('])):
+                        real_records += 1
+                        if len(example_records) < 5:
+                            example_records.append(record)
+                
                 stats_text = (
                     f"📊 Статистика базы данных\n\n"
-                    f"• Населенных пунктов: {len(locality_map)}\n"
+                    f"• Населенных пунктов: {real_records}\n"
                     f"• Уникальных КИЦ: {len(kic_map)}\n"
                     f"• Источник: {'Google Sheets' if source == 'google_sheets' else 'Резервные данные'}\n"
                     f"• Обновлено: {time.strftime('%H:%M:%S')}\n\n"
-                    f"Примеры населенных пунктов:\n"
                 )
                 
-                sample_localities = list(locality_map.keys())[:5]
-                for locality in sample_localities:
-                    record = locality_map[locality]
-                    stats_text += f"• {record['locality']} ({record['type']})\n"
+                if example_records:
+                    stats_text += "Примеры населенных пунктов:\n"
+                    for record in example_records:
+                        stats_text += f"• {record['locality']} ({record['type']})\n"
                 
                 keyboard = get_main_keyboard()
                 send_telegram_message(chat_id, stats_text, keyboard)
@@ -415,15 +537,22 @@ def webhook():
                             if locality_lower in loc_key or loc_key in locality_lower:
                                 matches.append(locality_map[loc_key])
                         
-                        if matches:
-                            if len(matches) == 1:
-                                response_text = format_record(matches[0])
+                        # Фильтруем только реальные совпадения
+                        real_matches = []
+                        for match in matches:
+                            if (match['locality'] and len(match['locality']) < 50 and 
+                                not any(keyword in match['locality'].lower() for keyword in ['function', 'var ', 'return', 'if('])):
+                                real_matches.append(match)
+                        
+                        if real_matches:
+                            if len(real_matches) == 1:
+                                response_text = format_record(real_matches[0])
                             else:
-                                response_text = f"🔍 Найдено {len(matches)} похожих населенных пунктов:\n\n"
-                                for i, match in enumerate(matches[:5], 1):
+                                response_text = f"🔍 Найдено {len(real_matches)} похожих населенных пунктов:\n\n"
+                                for i, match in enumerate(real_matches[:5], 1):
                                     response_text += f"{i}. {match['locality']} ({match['type']})\n"
-                                if len(matches) > 5:
-                                    response_text += f"... и еще {len(matches) - 5}"
+                                if len(real_matches) > 5:
+                                    response_text += f"... и еще {len(real_matches) - 5}"
                                 response_text += "\n\n🔍 Введите точное название населенного пункта."
                         else:
                             response_text = (
@@ -480,10 +609,18 @@ def debug():
     locality_map, kic_map = get_data()
     source = data_cache['source'] if data_cache and 'source' in data_cache else 'unknown'
     
+    # Считаем только реальные записи
+    real_records = 0
+    for record in locality_map.values():
+        if (record['locality'] and len(record['locality']) < 50 and 
+            not any(keyword in record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if('])):
+            real_records += 1
+    
     return jsonify({
         "bot_token_exists": bool(BOT_TOKEN),
-        "public_sheet_url": PUBLIC_SHEET_URL,
-        "records_count": len(locality_map),
+        "sheet_url": PUBLIC_SHEET_URL,
+        "real_records_count": real_records,
+        "total_records_count": len(locality_map),
         "kic_count": len(kic_map),
         "cache_age_seconds": int(time.time() - cache_timestamp) if data_cache else None,
         "data_source": source,
