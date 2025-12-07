@@ -17,7 +17,7 @@ app = Flask(__name__)
 BOT_TOKEN = os.environ.get('BOT_TOKEN', '8043513088:AAE8habdyEK0wlixTE34ISTr35t_mQ9vj2k')
 
 # URL для публично опубликованной таблицы (замените на ваш после публикации)
-PUBLIC_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQH5RckHh9JwG_i0qZ2oBzYbQ3n9N7VZJjZtN3X3JZ8q3jK3JpX0xV8_9VlL4b6kXp4Q1dQY8YjX/pub?gid=1532223079&single=true&output=csv"
+PUBLIC_SHEET_URL = "https://docs.google.com/spreadsheets/d/1h6dMEWsLcH--d4MB5CByx05xitOwhAGV/edit?usp=sharing&ouid=115696317720603768219&rtpof=true&sd=true"
 
 # Кэширование данных
 data_cache = None
