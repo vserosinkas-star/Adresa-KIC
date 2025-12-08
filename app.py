@@ -203,20 +203,6 @@ def process_csv_rows(rows):
     logger.info(f"CSV парсинг нашел {len(records)} записей")
     return records
 
-def get_backup_data():
-    """Резервные данные (только для тестирования, если таблица недоступна)"""
-    return [
-        {
-            'locality': 'Тестовый город',
-            'type': 'Город',
-            'kic': 'ДО №0000/0000 КИЦ Тестовый',
-            'address': '000000, г. Тестовый, ул. Тестовая, 1',
-            'fio': 'Тестовый Тест Тестович',
-            'phone': '000-000-0000',
-            'email': 'test@example.ru'
-        }
-    ]
-
 def get_data():
     """Получение данных с кэшированием ТОЛЬКО из Google Sheets"""
     global data_cache, cache_timestamp
@@ -236,6 +222,7 @@ def get_data():
         
         # Создаем структуры для поиска
         locality_map = {}
+        all_records = []  # Сохраняем все записи для поиска
         kic_map = {}
         
         for record in data:
@@ -246,11 +233,16 @@ def get_data():
             
             # Проверяем, что это реальный населенный пункт, а не JS код или пустая строка
             if (record['locality'] and len(record['locality']) < 50 and 
-                record['locality'] != 'населенный пункт' and
+                record['locality'].lower() != 'населенный пункт' and
                 not any(keyword in record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if(', 'for('])):
                 
                 locality_lower = record['locality'].lower()
+                
+                # Для точного поиска сохраняем в словарь
                 locality_map[locality_lower] = record
+                
+                # Сохраняем все записи для поиска по подстроке
+                all_records.append(record)
                 
                 # Извлекаем код КИЦ
                 kic_match = re.search(r'№\s*(\d+/\d+)', record['kic'])
@@ -270,6 +262,7 @@ def get_data():
         
         data_cache = {
             'locality_map': locality_map,
+            'all_records': all_records,  # Сохраняем все записи для поиска
             'kic_map': kic_map,
             'raw_data': data,
             'last_update': current_time,
@@ -277,16 +270,16 @@ def get_data():
         }
         
         cache_timestamp = current_time
-        logger.info(f"Данные загружены: {len(locality_map)} населенных пунктов, {len(kic_map)} КИЦ")
+        logger.info(f"Данные загружены: {len(all_records)} записей, {len(kic_map)} КИЦ")
         logger.info(f"Источник данных: {data_cache['source']}")
         
-        # Логируем первые 5 записей для проверки
-        if data:
-            logger.info("Первые 5 записей из таблицы:")
-            for i, record in enumerate(data[:5]):
+        # Логируем первые 10 записей для проверки
+        if all_records:
+            logger.info("Первые 10 записей из таблицы:")
+            for i, record in enumerate(all_records[:10]):
                 logger.info(f"{i+1}. {record['locality']} ({record['type']}) - {record['kic']}")
     
-    return data_cache['locality_map'], data_cache['kic_map']
+    return data_cache['locality_map'], data_cache['all_records'], data_cache['kic_map']
 
 def extract_kic_info(kic_text):
     """Извлекает информацию о КИЦ из строки"""
@@ -304,15 +297,15 @@ def extract_kic_info(kic_text):
     
     return do_number, kic_name
 
-def find_all_matches(locality_map, search_text):
+def find_all_matches(all_records, search_text):
     """Находит все совпадения по поисковому тексту в Google Sheets"""
     search_lower = search_text.lower()
     matches = []
     
-    # Ищем во всех записях из Google Sheets
-    for loc_key, record in locality_map.items():
+    # Ищем во ВСЕХ записях из Google Sheets
+    for record in all_records:
         # Проверяем, содержит ли название населенного пункта искомый текст
-        if search_lower in loc_key:
+        if search_lower in record['locality'].lower():
             # Фильтруем только реальные совпадения
             if (record['locality'] and len(record['locality']) < 50 and 
                 not any(keyword in record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if('])):
@@ -324,7 +317,7 @@ def find_all_matches(locality_map, search_text):
     
     for match in matches:
         # Создаем уникальный ключ для каждой записи
-        key = (match['locality'].lower(), match['type'], match['kic'])
+        key = (match['locality'].lower(), match['type'], match['kic'], match['address'])
         if key not in seen:
             seen.add(key)
             unique_matches.append(match)
@@ -345,23 +338,30 @@ def get_main_keyboard():
 
 def get_localities_keyboard():
     """Клавиатура с популярными населенными пунктами из Google Sheets"""
-    locality_map, _ = get_data()
+    locality_map, all_records, _ = get_data()
     
     # Фильтруем только реальные населенные пункты
     real_localities = []
     for locality_key, record in locality_map.items():
         if (record['locality'] and len(record['locality']) < 50 and 
             not any(keyword in record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if('])):
-            real_localities.append(locality_key)
+            real_localities.append(record['locality'])
+    
+    # Убираем дубликаты названий
+    unique_localities = []
+    seen = set()
+    for locality in real_localities:
+        if locality not in seen:
+            seen.add(locality)
+            unique_localities.append(locality)
     
     # Берем первые 12 реальных населенных пунктов
-    localities = real_localities[:12]
+    localities = unique_localities[:12]
     
     keyboard = []
     row = []
     for i, locality in enumerate(localities):
-        original_name = locality_map[locality]['locality']
-        row.append({"text": original_name})
+        row.append({"text": locality})
         if len(row) == 2 or i == len(localities) - 1:
             keyboard.append(row)
             row = []
@@ -421,10 +421,10 @@ def webhook():
                 global data_cache, cache_timestamp
                 data_cache = None
                 cache_timestamp = 0
-                locality_map, kic_map = get_data()
+                locality_map, all_records, kic_map = get_data()
                 
-                if locality_map:
-                    response_text = f"✅ Данные успешно обновлены из Google Sheets\n\nЗагружено {len(locality_map)} записей."
+                if all_records:
+                    response_text = f"✅ Данные успешно обновлены из Google Sheets\n\nЗагружено {len(all_records)} записей."
                 else:
                     response_text = "❌ Не удалось загрузить данные из Google Sheets. Проверьте доступ к таблице."
                 
@@ -444,20 +444,20 @@ def webhook():
                     "🔍 Примеры поиска:\n"
                     "• При вводе 'Октябрь' найдет все населенные пункты, содержащие это слово\n"
                     "• При вводе '8598/0496' найдет все записи с этим кодом КИЦ\n"
-                    "• Можно вводить часть названия: 'окт', 'октя', 'октяб'"
+                    "• Можно вводить часть названия: 'окт', 'октя', 'октяб', 'ктя'"
                 )
                 keyboard = get_main_keyboard()
                 send_telegram_message(chat_id, response_text, keyboard)
             
             elif text == "📊 Статистика":
-                locality_map, kic_map = get_data()
+                locality_map, all_records, kic_map = get_data()
                 source = data_cache['source'] if data_cache and 'source' in data_cache else 'unknown'
                 
                 # Считаем только реальные записи
                 real_records = 0
                 example_records = []
                 
-                for record in locality_map.values():
+                for record in all_records:
                     if (record['locality'] and len(record['locality']) < 50 and 
                         not any(keyword in record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if('])):
                         real_records += 1
@@ -466,7 +466,7 @@ def webhook():
                 
                 stats_text = (
                     f"📊 Статистика базы данных из Google Sheets\n\n"
-                    f"• Населенных пунктов: {real_records}\n"
+                    f"• Всего записей: {real_records}\n"
                     f"• Уникальных КИЦ: {len(kic_map)}\n"
                     f"• Источник: Google Sheets\n"
                     f"• Обновлено: {time.strftime('%H:%M:%S')}\n"
@@ -484,7 +484,7 @@ def webhook():
                 send_telegram_message(chat_id, stats_text, keyboard)
             
             else:
-                locality_map, kic_map = get_data()
+                locality_map, all_records, kic_map = get_data()
                 
                 # Проверяем, является ли ввод кодом КИЦ
                 kic_match = re.search(r'(\d+/\d+)', text)
@@ -522,8 +522,8 @@ def webhook():
                     if record:
                         response_text = format_record(record)
                     else:
-                        # Ищем все совпадения (включая частичные) В Google Sheets
-                        matches = find_all_matches(locality_map, text)
+                        # Ищем ВСЕ совпадения (включая частичные) В Google Sheets
+                        matches = find_all_matches(all_records, text)
                         
                         if matches:
                             if len(matches) == 1:
@@ -542,7 +542,7 @@ def webhook():
                                 response_text += "\n🔍 Введите полное и точное название населенного пункта для получения подробной информации."
                         else:
                             # Проверяем, есть ли вообще данные в таблице
-                            if not locality_map:
+                            if not all_records:
                                 response_text = (
                                     f"❌ Нет данных в Google Sheets таблице.\n\n"
                                     "Проверьте:\n"
@@ -553,6 +553,7 @@ def webhook():
                             else:
                                 response_text = (
                                     f"❌ Населенный пункт «{text}» не найден в Google Sheets.\n\n"
+                                    f"Всего записей в таблице: {len(all_records)}\n"
                                     "Попробуйте:\n"
                                     "• Проверить правильность написания\n"
                                     "• Использовать часть названия (например, 'окт' вместо 'октябрьское')\n"
@@ -613,27 +614,20 @@ def send_telegram_message(chat_id, text, reply_markup=None):
 
 @app.route('/debug')
 def debug():
-    locality_map, kic_map = get_data()
+    locality_map, all_records, kic_map = get_data()
     source = data_cache['source'] if data_cache and 'source' in data_cache else 'unknown'
-    
-    # Считаем только реальные записи
-    real_records = 0
-    for record in locality_map.values():
-        if (record['locality'] and len(record['locality']) < 50 and 
-            not any(keyword in record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if('])):
-            real_records += 1
     
     return jsonify({
         "bot_token_exists": bool(BOT_TOKEN),
         "sheet_url": PUBLIC_SHEET_URL,
         "google_sheet_id": GOOGLE_SHEET_ID,
         "gid": GOOGLE_SHEET_GID,
-        "real_records_count": real_records,
-        "total_records_count": len(locality_map),
+        "all_records_count": len(all_records),
+        "locality_map_count": len(locality_map),
         "kic_count": len(kic_map),
         "cache_age_seconds": int(time.time() - cache_timestamp) if data_cache else None,
         "data_source": source,
-        "first_5_records": [{"locality": r['locality'], "type": r['type'], "kic": r['kic']} for r in list(locality_map.values())[:5]] if locality_map else [],
+        "first_10_records": [{"locality": r['locality'], "type": r['type'], "kic": r['kic']} for r in all_records[:10]] if all_records else [],
         "status": "running"
     })
 
@@ -645,11 +639,34 @@ def test_sheet():
         return jsonify({
             "status_code": response.status_code,
             "content_type": response.headers.get('Content-Type'),
+            "content_length": len(response.text),
             "content_preview": response.text[:500],
             "sheet_url": PUBLIC_SHEET_URL
         })
     except Exception as e:
         return jsonify({"error": str(e)})
+
+@app.route('/search_test')
+def search_test():
+    """Тестирование поиска"""
+    locality_map, all_records, kic_map = get_data()
+    
+    # Тестируем поиск разных вариантов
+    test_searches = ['октябрь', 'окт', 'ктя', 'путь октября']
+    results = {}
+    
+    for search in test_searches:
+        matches = find_all_matches(all_records, search)
+        results[search] = {
+            "count": len(matches),
+            "matches": [{"locality": r['locality'], "type": r['type'], "kic": r['kic']} for r in matches[:5]]
+        }
+    
+    return jsonify({
+        "all_records_count": len(all_records),
+        "search_results": results,
+        "test_searches": test_searches
+    })
 
 @app.route('/refresh_cache')
 def refresh_cache():
