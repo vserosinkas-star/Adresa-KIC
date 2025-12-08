@@ -4,6 +4,7 @@ import re
 import time
 import csv
 import io
+import html
 from flask import Flask, request, jsonify
 import requests
 from dotenv import load_dotenv
@@ -329,8 +330,8 @@ def clean_phone_number(phone):
     if not phone:
         return ""
     
-    # Убираем все символы, кроме цифр
-    cleaned = re.sub(r'\D', '', phone)
+    # Убираем все символы, кроме цифр и плюса
+    cleaned = re.sub(r'[^\d+]', '', phone)
     
     # Если номер начинается с 8 и имеет 11 цифр, заменяем 8 на 7
     if len(cleaned) == 11 and cleaned.startswith('8'):
@@ -340,7 +341,25 @@ def clean_phone_number(phone):
     elif len(cleaned) == 10:
         cleaned = '7' + cleaned
     
-    return cleaned
+    # Если нет плюса в начале, добавляем его
+    if cleaned and not cleaned.startswith('+'):
+        if cleaned.startswith('7'):
+            cleaned = '+' + cleaned
+        else:
+            cleaned = '+7' + cleaned
+    
+    # Убираем все символы, кроме цифр и плюса в начале
+    if cleaned.startswith('+'):
+        country_code = '+'
+        digits = cleaned[1:]
+    else:
+        country_code = ''
+        digits = cleaned
+    
+    # Оставляем только цифры
+    digits = re.sub(r'\D', '', digits)
+    
+    return country_code + digits
 
 def format_record(record):
     """Форматирование записи для отображения с кликабельными ссылками"""
@@ -353,23 +372,45 @@ def format_record(record):
     # Очищаем номер телефона для ссылки
     phone_cleaned = clean_phone_number(record['phone'])
     
+    # Экранируем HTML-сущности в тексте (кроме ссылок)
+    locality_escaped = html.escape(record['locality'])
+    type_escaped = html.escape(record['type'])
+    kic_display_escaped = html.escape(kic_display)
+    address_escaped = html.escape(record['address'])
+    fio_escaped = html.escape(record['fio'])
+    phone_display = html.escape(record['phone']) if record['phone'] else ""
+    email_display = html.escape(record['email']) if record['email'] else ""
+    
+    # Логируем для отладки
+    logger.info(f"Форматирование записи: {record['locality']}")
+    logger.info(f"Телефон оригинальный: '{record['phone']}'")
+    logger.info(f"Телефон очищенный: '{phone_cleaned}'")
+    logger.info(f"Email: '{record['email']}'")
+    
     # Формируем HTML-сообщение с кликабельными ссылками
     html_message = (
-        f"<b>📍 Населенный пункт:</b> {record['locality']} ({record['type']})\n\n"
-        f"<b>🏢 КИЦ:</b> {kic_display}\n"
-        f"<b>📫 Адрес КИЦ:</b> {record['address']}\n\n"
-        f"<b>👤 РКИЦ:</b> {record['fio']}\n"
+        f"<b>📍 Населенный пункт:</b> {locality_escaped} ({type_escaped})\n\n"
+        f"<b>🏢 КИЦ:</b> {kic_display_escaped}\n"
+        f"<b>📫 Адрес КИЦ:</b> {address_escaped}\n\n"
+        f"<b>👤 РКИЦ:</b> {fio_escaped}\n"
     )
     
-    # Добавляем кликабельный телефон
+    # Добавляем кликабельный телефон с правильным форматом
     if phone_cleaned and record['phone']:
-        html_message += f"<b>📞 Телефон:</b> <a href=\"tel:{phone_cleaned}\">{record['phone']}</a>\n"
+        # Для телефона используем формат +79991234567
+        # Убедимся, что номер начинается с +
+        if not phone_cleaned.startswith('+'):
+            phone_cleaned = '+' + phone_cleaned
+        
+        html_message += f'<b>📞 Телефон:</b> <a href="tel:{phone_cleaned}">{phone_display}</a>\n'
     elif record['phone']:
-        html_message += f"<b>📞 Телефон:</b> {record['phone']}\n"
+        html_message += f"<b>📞 Телефон:</b> {phone_display}\n"
     
     # Добавляем кликабельный email
     if record['email']:
-        html_message += f"<b>📧 Email:</b> <a href=\"mailto:{record['email']}\">{record['email']}</a>\n"
+        # Очищаем email от лишних пробелов
+        email_clean = record['email'].strip()
+        html_message += f'<b>📧 Email:</b> <a href="mailto:{email_clean}">{email_display}</a>\n'
     
     html_message += (
         f"\n<b>📊 Источник:</b> Google Sheets\n"
@@ -530,7 +571,7 @@ def webhook():
                 if example_records:
                     stats_text += "<b>Примеры населенных пунктов:</b>\n"
                     for record in example_records:
-                        stats_text += f"• {record['locality']} ({record['type']})\n"
+                        stats_text += f"• {html.escape(record['locality'])} ({html.escape(record['type'])})\n"
                 else:
                     stats_text += "❌ <b>Нет данных.</b> Проверьте доступ к Google Sheets таблице."
                 
@@ -551,18 +592,20 @@ def webhook():
                         if len(records) == 1:
                             response_text = format_record(records[0])
                         else:
-                            response_text = f"<b>🔍 Найдено {len(records)} записей для КИЦ {kic_code}:</b>\n\n"
+                            response_text = f"<b>🔍 Найдено {len(records)} записей для КИЦ {html.escape(kic_code)}:</b>\n\n"
                             for i, record in enumerate(records, 1):
                                 do_number, kic_name = extract_kic_info(record['kic'])
-                                response_text += f"{i}. {record['locality']} ({record['type']})"
+                                locality_escaped = html.escape(record['locality'])
+                                type_escaped = html.escape(record['type'])
+                                response_text += f"{i}. {locality_escaped} ({type_escaped})"
                                 if do_number:
                                     response_text += f" ДО №{do_number}"
                                 if kic_name:
-                                    response_text += f" КИЦ {kic_name}"
+                                    response_text += f" КИЦ {html.escape(kic_name)}"
                                 response_text += "\n"
                             response_text += "\n<b>🔍 Уточните поиск, введя полное название населенного пункта.</b>"
                     else:
-                        response_text = f"❌ <b>КИЦ с кодом {kic_code} не найден в Google Sheets.</b>"
+                        response_text = f"❌ <b>КИЦ с кодом {html.escape(kic_code)} не найден в Google Sheets.</b>"
                     
                     keyboard = get_main_keyboard()
                     send_telegram_message(chat_id, response_text, keyboard, parse_mode='HTML')
@@ -585,11 +628,13 @@ def webhook():
                                 response_text = f"<b>🔍 Найдено {len(matches)} похожих населенных пунктов в Google Sheets:</b>\n\n"
                                 for i, match in enumerate(matches, 1):
                                     do_number, kic_name = extract_kic_info(match['kic'])
-                                    response_text += f"{i}. {match['locality']} ({match['type']})"
+                                    locality_escaped = html.escape(match['locality'])
+                                    type_escaped = html.escape(match['type'])
+                                    response_text += f"{i}. {locality_escaped} ({type_escaped})"
                                     if do_number:
                                         response_text += f" ДО №{do_number}"
                                     if kic_name:
-                                        response_text += f" КИЦ {kic_name}"
+                                        response_text += f" КИЦ {html.escape(kic_name)}"
                                     response_text += "\n"
                                 
                                 response_text += "\n<b>🔍 Введите полное и точное название населенного пункта для получения подробной информации.</b>"
@@ -604,8 +649,9 @@ def webhook():
                                     "3. Нажмите '🔄 Обновить данные' для повторной загрузки"
                                 )
                             else:
+                                text_escaped = html.escape(text)
                                 response_text = (
-                                    f"❌ <b>Населенный пункт «{text}» не найден в Google Sheets.</b>\n\n"
+                                    f"❌ <b>Населенный пункт «{text_escaped}» не найден в Google Sheets.</b>\n\n"
                                     f"<b>Всего записей в таблице:</b> {len(all_records)}\n"
                                     "<b>Попробуйте:</b>\n"
                                     "• Проверить правильность написания\n"
@@ -713,5 +759,8 @@ def refresh_cache():
     return jsonify({"status": "cache refreshed"})
 
 if __name__ == '__main__':
+    # Предварительная загрузка данных при запуске
+    logger.info("Запуск бота...")
+    logger.info(f"Используется Google Sheets ID: {GOOGLE_SHEET_ID}")
     get_data()
-    app.run(host='0.0.0.0', port=3000)
+    app.run(host='0.0.0.0', port=3000, debug=False)
