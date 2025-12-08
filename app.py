@@ -207,6 +207,33 @@ def get_backup_data():
     """Резервные данные"""
     backup_data = [
         {
+            'locality': 'Октябрьское',
+            'type': 'Город',
+            'kic': 'ДО №8598/0496 КИЦ Белебей',
+            'address': '452030, г. Белебей, ул. Советская, 15',
+            'fio': 'Иванов Иван Иванович',
+            'phone': '999-111-2233',
+            'email': 'ivanov@example.ru'
+        },
+        {
+            'locality': 'Октябрьское',
+            'type': 'Посёлок',
+            'kic': 'ДО №8598/0629 КИЦ Нефтекамск',
+            'address': '452680, г. Нефтекамск, ул. Ленина, 25',
+            'fio': 'Петров Петр Петрович',
+            'phone': '999-222-3344',
+            'email': 'petrov@example.ru'
+        },
+        {
+            'locality': 'Октябрьское',
+            'type': 'Поселок',
+            'kic': 'ДО №8599/0138 КИЦ Курган',
+            'address': '640000, г. Курган, ул. Гоголя, 7',
+            'fio': 'Сидоров Сидор Сидорович',
+            'phone': '999-333-4455',
+            'email': 'sidorov@example.ru'
+        },
+        {
             'locality': 'Антипаюта',
             'type': 'Село',
             'kic': 'ДО №8369/018 КИЦ Новоуренгойский',
@@ -354,7 +381,21 @@ def get_data():
     
     return data_cache['locality_map'], data_cache['kic_map']
 
-# ... (остальной код остается таким же, как в предыдущих примерах) ...
+def extract_kic_info(kic_text):
+    """Извлекает информацию о КИЦ из строки"""
+    # Ищем номер ДО
+    do_match = re.search(r'ДО\s*№\s*(\d+/\d+)', kic_text)
+    do_number = do_match.group(1) if do_match else ""
+    
+    # Ищем название КИЦ (всё после "КИЦ")
+    kic_name_match = re.search(r'КИЦ\s*(.+)', kic_text)
+    if kic_name_match:
+        kic_name = kic_name_match.group(1).strip()
+    else:
+        # Если нет "КИЦ", используем всю строку
+        kic_name = kic_text.strip()
+    
+    return do_number, kic_name
 
 def get_main_keyboard():
     """Клавиатура главного меню"""
@@ -461,7 +502,7 @@ def webhook():
                     "🤖 Помощь по боту поиска КИЦ\n\n"
                     "• 🔍 Поиск по населенному пункту - найти КИЦ по названию населенного пункта\n"
                     "• 🏢 Поиск по КИЦ - найти по коду кассово-инкассаторского центра\n"
-                    "• 📍 Популярные населенные пункты - быстрый выбор из списка\n"
+                    "• 📍 Популярные населенные пункты - быстрый выбор из спискhttps://files.oaiusercontent.com/file-wCxj0M1R2H4LAODeMfeItfgB?se=2025-01-12T07%3A39%3A31Z&sp=r&sv=2024-08-04&sr=b&rscc=max-age%3D604800%2C%20immutable&rscd=attachment%3B%20filename%3D%25D0%259F%25D0%25BE%25D0%25BB%25D0%25BD%25D1%258B%25D0%25B9%2520%25D0%25BA%25D0%25BE%25D0%25B4%2520%25D0%25B1%25D0%25BE%25D1%2582%25D0%25B0.txt&sig=4obO0aG8lZ8d3Rk0MvPjsNL9YIkUaLFEF6x6Qy4xNZ4%3Da\n"
                     "• 📊 Статистика - информация о базе данных\n"
                     "• 🔄 Обновить данные - обновить данные из Google Sheets\n\n"
                     "Просто введите название населенного пункта или код КИЦ!"
@@ -517,7 +558,13 @@ def webhook():
                         else:
                             response_text = f"🔍 Найдено {len(records)} записей для КИЦ {kic_code}:\n\n"
                             for i, record in enumerate(records, 1):
-                                response_text += f"{i}. {record['locality']} ({record['type']})\n"
+                                do_number, kic_name = extract_kic_info(record['kic'])
+                                response_text += f"{i}. {record['locality']} ({record['type']})"
+                                if do_number:
+                                    response_text += f" ДО №{do_number}"
+                                if kic_name:
+                                    response_text += f" КИЦ {kic_name}"
+                                response_text += "\n"
                             response_text += "\n🔍 Уточните поиск, введя полное название населенного пункта."
                     else:
                         response_text = f"❌ КИЦ с кодом {kic_code} не найден."
@@ -532,33 +579,89 @@ def webhook():
                     if record:
                         response_text = format_record(record)
                     else:
+                        # Ищем все совпадения (полное или частичное)
                         matches = []
-                        for loc_key in locality_map.keys():
-                            if locality_lower in loc_key or loc_key in locality_lower:
-                                matches.append(locality_map[loc_key])
+                        for loc_key, loc_record in locality_map.items():
+                            # Проверяем полное совпадение или начало названия
+                            if (locality_lower in loc_key or 
+                                loc_key.startswith(locality_lower) or
+                                any(word.startswith(locality_lower) for word in loc_key.split())):
+                                
+                                # Фильтруем только реальные совпадения
+                                if (loc_record['locality'] and len(loc_record['locality']) < 50 and 
+                                    not any(keyword in loc_record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if('])):
+                                    matches.append(loc_record)
                         
-                        # Фильтруем только реальные совпадения
-                        real_matches = []
-                        for match in matches:
-                            if (match['locality'] and len(match['locality']) < 50 and 
-                                not any(keyword in match['locality'].lower() for keyword in ['function', 'var ', 'return', 'if('])):
-                                real_matches.append(match)
-                        
-                        if real_matches:
-                            if len(real_matches) == 1:
-                                response_text = format_record(real_matches[0])
+                        if matches:
+                            if len(matches) == 1:
+                                response_text = format_record(matches[0])
                             else:
-                                response_text = f"🔍 Найдено {len(real_matches)} похожих населенных пунктов:\n\n"
-                                for i, match in enumerate(real_matches[:5], 1):
-                                    response_text += f"{i}. {match['locality']} ({match['type']})\n"
-                                if len(real_matches) > 5:
-                                    response_text += f"... и еще {len(real_matches) - 5}"
-                                response_text += "\n\n🔍 Введите точное название населенного пункта."
+                                # Группируем по полному названию (на случай дубликатов)
+                                unique_matches = {}
+                                for match in matches:
+                                    key = f"{match['locality'].lower()}_{match['type']}_{match['kic']}"
+                                    if key not in unique_matches:
+                                        unique_matches[key] = match
+                                
+                                matches = list(unique_matches.values())
+                                
+                                response_text = f"🔍 Найдено {len(matches)} похожих населенных пунктов:\n\n"
+                                for i, match in enumerate(matches[:15], 1):  # Ограничиваем 15 результатами
+                                    do_number, kic_name = extract_kic_info(match['kic'])
+                                    response_text += f"{i}. {match['locality']} ({match['type']})"
+                                    if do_number:
+                                        response_text += f" ДО №{do_number}"
+                                    if kic_name:
+                                        response_text += f" КИЦ {kic_name}"
+                                    response_text += "\n"
+                                
+                                if len(matches) > 15:
+                                    response_text += f"\n... и еще {len(matches) - 15} результатов"
+                                
+                                response_text += "\n\n🔍 Введите полное и точное название населенного пункта для получения подробной информации."
                         else:
-                            response_text = (
-                                f"❌ Населенный пункт «{text}» не найден.\n\n"
-                                "Попробуйте другой населенный пункт или используйте кнопки ниже:"
-                            )
+                            # Если не нашли полных совпадений, ищем частичные
+                            partial_matches = []
+                            for loc_key, loc_record in locality_map.items():
+                                if locality_lower in loc_key:
+                                    if (loc_record['locality'] and len(loc_record['locality']) < 50 and 
+                                        not any(keyword in loc_record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if('])):
+                                        partial_matches.append(loc_record)
+                            
+                            if partial_matches:
+                                if len(partial_matches) == 1:
+                                    response_text = format_record(partial_matches[0])
+                                else:
+                                    unique_partial_matches = {}
+                                    for match in partial_matches:
+                                        key = f"{match['locality'].lower()}_{match['type']}_{match['kic']}"
+                                        if key not in unique_partial_matches:
+                                            unique_partial_matches[key] = match
+                                    
+                                    partial_matches = list(unique_partial_matches.values())
+                                    
+                                    response_text = f"🔍 Найдено {len(partial_matches)} похожих населенных пунктов:\n\n"
+                                    for i, match in enumerate(partial_matches[:15], 1):
+                                        do_number, kic_name = extract_kic_info(match['kic'])
+                                        response_text += f"{i}. {match['locality']} ({match['type']})"
+                                        if do_number:
+                                            response_text += f" ДО №{do_number}"
+                                        if kic_name:
+                                            response_text += f" КИЦ {kic_name}"
+                                        response_text += "\n"
+                                    
+                                    if len(partial_matches) > 15:
+                                        response_text += f"\n... и еще {len(partial_matches) - 15} результатов"
+                                    
+                                    response_text += "\n\n🔍 Введите полное и точное название населенного пункта для получения подробной информации."
+                            else:
+                                response_text = (
+                                    f"❌ Населенный пункт «{text}» не найден.\n\n"
+                                    "Попробуйте:\n"
+                                    "• Проверить правильность написания\n"
+                                    "• Использовать полное название\n"
+                                    "• Воспользоваться кнопкой '📍 Популярные населенные пункты'"
+                                )
                     
                     keyboard = get_main_keyboard()
                     send_telegram_message(chat_id, response_text, keyboard)
@@ -566,14 +669,20 @@ def webhook():
         return jsonify({"status": "ok"})
         
     except Exception as e:
-        logger.error(f"Ошибка в webhook: {str(e)}")
+        logger.error(f"Ошибка в webhook: {str(e)}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
 
 def format_record(record):
     """Форматирование записи для отображения"""
+    do_number, kic_name = extract_kic_info(record['kic'])
+    
+    kic_display = record['kic']
+    if do_number and kic_name:
+        kic_display = f"ДО №{do_number} КИЦ {kic_name}"
+    
     return (
         f"📍 Населенный пункт: {record['locality']} ({record['type']})\n\n"
-        f"🏢 КИЦ: {record['kic']}\n"
+        f"🏢 КИЦ: {kic_display}\n"
         f"📫 Адрес КИЦ: {record['address']}\n\n"
         f"👤 РКИЦ: {record['fio']}\n"
         f"📞 Телефон: {record['phone']}\n"
