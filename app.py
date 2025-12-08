@@ -207,7 +207,7 @@ def get_backup_data():
     """Резервные данные"""
     backup_data = [
         {
-            'locality': 'Октябрьское',
+            'locality': 'Октябрьский',
             'type': 'Город',
             'kic': 'ДО №8598/0496 КИЦ Белебей',
             'address': '452030, г. Белебей, ул. Советская, 15',
@@ -216,10 +216,10 @@ def get_backup_data():
             'email': 'ivanov@example.ru'
         },
         {
-            'locality': 'Октябрьское',
+            'locality': 'Путь Октября',
             'type': 'Посёлок',
-            'kic': 'ДО №8598/0629 КИЦ Нефтекамск',
-            'address': '452680, г. Нефтекамск, ул. Ленина, 25',
+            'kic': 'ДО №8597/0374 КИЦ Магнитогорск',
+            'address': '455000, г. Магнитогорск, ул. Ленина, 25',
             'fio': 'Петров Петр Петрович',
             'phone': '999-222-3344',
             'email': 'petrov@example.ru'
@@ -227,11 +227,20 @@ def get_backup_data():
         {
             'locality': 'Октябрьское',
             'type': 'Поселок',
-            'kic': 'ДО №8599/0138 КИЦ Курган',
-            'address': '640000, г. Курган, ул. Гоголя, 7',
+            'kic': 'ДО №5940/0207 КИЦ Няганский',
+            'address': '628181, г. Нягань, ул. Ленина, 10',
             'fio': 'Сидоров Сидор Сидорович',
             'phone': '999-333-4455',
             'email': 'sidorov@example.ru'
+        },
+        {
+            'locality': 'Октябрьское',
+            'type': 'Село',
+            'kic': 'ДО №8599/0138 КИЦ Курган',
+            'address': '640000, г. Курган, ул. Гоголя, 7',
+            'fio': 'Кузнецов Алексей Владимирович',
+            'phone': '999-444-5566',
+            'email': 'kuznetsov@example.ru'
         },
         {
             'locality': 'Антипаюта',
@@ -397,6 +406,33 @@ def extract_kic_info(kic_text):
     
     return do_number, kic_name
 
+def find_all_matches(locality_map, search_text):
+    """Находит все совпадения по поисковому тексту"""
+    search_lower = search_text.lower()
+    matches = []
+    
+    for loc_key, record in locality_map.items():
+        # Проверяем, содержит ли название населенного пункта искомый текст
+        # Или начинается с искомого текста (для более точного поиска)
+        if search_lower in loc_key:
+            # Фильтруем только реальные совпадения
+            if (record['locality'] and len(record['locality']) < 50 and 
+                not any(keyword in record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if('])):
+                matches.append(record)
+    
+    # Убираем дубликаты (если есть одинаковые записи)
+    unique_matches = []
+    seen = set()
+    
+    for match in matches:
+        # Создаем уникальный ключ для каждой записи
+        key = (match['locality'].lower(), match['type'], match['kic'])
+        if key not in seen:
+            seen.add(key)
+            unique_matches.append(match)
+    
+    return unique_matches
+
 def get_main_keyboard():
     """Клавиатура главного меню"""
     return {
@@ -502,10 +538,12 @@ def webhook():
                     "🤖 Помощь по боту поиска КИЦ\n\n"
                     "• 🔍 Поиск по населенному пункту - найти КИЦ по названию населенного пункта\n"
                     "• 🏢 Поиск по КИЦ - найти по коду кассово-инкассаторского центра\n"
-                    "• 📍 Популярные населенные пункты - быстрый выбор из спискhttps://files.oaiusercontent.com/file-wCxj0M1R2H4LAODeMfeItfgB?se=2025-01-12T07%3A39%3A31Z&sp=r&sv=2024-08-04&sr=b&rscc=max-age%3D604800%2C%20immutable&rscd=attachment%3B%20filename%3D%25D0%259F%25D0%25BE%25D0%25BB%25D0%25BD%25D1%258B%25D0%25B9%2520%25D0%25BA%25D0%25BE%25D0%25B4%2520%25D0%25B1%25D0%25BE%25D1%2582%25D0%25B0.txt&sig=4obO0aG8lZ8d3Rk0MvPjsNL9YIkUaLFEF6x6Qy4xNZ4%3Da\n"
+                    "• 📍 Популярные населенные пункты - быстрый выбор из списка\n"
                     "• 📊 Статистика - информация о базе данных\n"
                     "• 🔄 Обновить данные - обновить данные из Google Sheets\n\n"
-                    "Просто введите название населенного пункта или код КИЦ!"
+                    "📝 Примеры поиска:\n"
+                    "• При вводе 'Октябрь' найдет все населенные пункты, содержащие это слово\n"
+                    "• При вводе '8598/0496' найдет все записи с этим кодом КИЦ"
                 )
                 keyboard = get_main_keyboard()
                 send_telegram_message(chat_id, response_text, keyboard)
@@ -573,40 +611,22 @@ def webhook():
                     send_telegram_message(chat_id, response_text, keyboard)
                 
                 else:
+                    # Ищем точное совпадение
                     locality_lower = text.lower()
                     record = locality_map.get(locality_lower)
                     
                     if record:
                         response_text = format_record(record)
                     else:
-                        # Ищем все совпадения (полное или частичное)
-                        matches = []
-                        for loc_key, loc_record in locality_map.items():
-                            # Проверяем полное совпадение или начало названия
-                            if (locality_lower in loc_key or 
-                                loc_key.startswith(locality_lower) or
-                                any(word.startswith(locality_lower) for word in loc_key.split())):
-                                
-                                # Фильтруем только реальные совпадения
-                                if (loc_record['locality'] and len(loc_record['locality']) < 50 and 
-                                    not any(keyword in loc_record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if('])):
-                                    matches.append(loc_record)
+                        # Ищем все совпадения (включая частичные)
+                        matches = find_all_matches(locality_map, text)
                         
                         if matches:
                             if len(matches) == 1:
                                 response_text = format_record(matches[0])
                             else:
-                                # Группируем по полному названию (на случай дубликатов)
-                                unique_matches = {}
-                                for match in matches:
-                                    key = f"{match['locality'].lower()}_{match['type']}_{match['kic']}"
-                                    if key not in unique_matches:
-                                        unique_matches[key] = match
-                                
-                                matches = list(unique_matches.values())
-                                
                                 response_text = f"🔍 Найдено {len(matches)} похожих населенных пунктов:\n\n"
-                                for i, match in enumerate(matches[:15], 1):  # Ограничиваем 15 результатами
+                                for i, match in enumerate(matches, 1):
                                     do_number, kic_name = extract_kic_info(match['kic'])
                                     response_text += f"{i}. {match['locality']} ({match['type']})"
                                     if do_number:
@@ -615,53 +635,15 @@ def webhook():
                                         response_text += f" КИЦ {kic_name}"
                                     response_text += "\n"
                                 
-                                if len(matches) > 15:
-                                    response_text += f"\n... и еще {len(matches) - 15} результатов"
-                                
-                                response_text += "\n\n🔍 Введите полное и точное название населенного пункта для получения подробной информации."
+                                response_text += "\n🔍 Введите полное и точное название населенного пункта для получения подробной информации."
                         else:
-                            # Если не нашли полных совпадений, ищем частичные
-                            partial_matches = []
-                            for loc_key, loc_record in locality_map.items():
-                                if locality_lower in loc_key:
-                                    if (loc_record['locality'] and len(loc_record['locality']) < 50 and 
-                                        not any(keyword in loc_record['locality'].lower() for keyword in ['function', 'var ', 'return', 'if('])):
-                                        partial_matches.append(loc_record)
-                            
-                            if partial_matches:
-                                if len(partial_matches) == 1:
-                                    response_text = format_record(partial_matches[0])
-                                else:
-                                    unique_partial_matches = {}
-                                    for match in partial_matches:
-                                        key = f"{match['locality'].lower()}_{match['type']}_{match['kic']}"
-                                        if key not in unique_partial_matches:
-                                            unique_partial_matches[key] = match
-                                    
-                                    partial_matches = list(unique_partial_matches.values())
-                                    
-                                    response_text = f"🔍 Найдено {len(partial_matches)} похожих населенных пунктов:\n\n"
-                                    for i, match in enumerate(partial_matches[:15], 1):
-                                        do_number, kic_name = extract_kic_info(match['kic'])
-                                        response_text += f"{i}. {match['locality']} ({match['type']})"
-                                        if do_number:
-                                            response_text += f" ДО №{do_number}"
-                                        if kic_name:
-                                            response_text += f" КИЦ {kic_name}"
-                                        response_text += "\n"
-                                    
-                                    if len(partial_matches) > 15:
-                                        response_text += f"\n... и еще {len(partial_matches) - 15} результатов"
-                                    
-                                    response_text += "\n\n🔍 Введите полное и точное название населенного пункта для получения подробной информации."
-                            else:
-                                response_text = (
-                                    f"❌ Населенный пункт «{text}» не найден.\n\n"
-                                    "Попробуйте:\n"
-                                    "• Проверить правильность написания\n"
-                                    "• Использовать полное название\n"
-                                    "• Воспользоваться кнопкой '📍 Популярные населенные пункты'"
-                                )
+                            response_text = (
+                                f"❌ Населенный пункт «{text}» не найден.\n\n"
+                                "Попробуйте:\n"
+                                "• Проверить правильность написания\n"
+                                "• Использовать часть названия (например, 'октябрь' вместо 'октябрьское')\n"
+                                "• Воспользоваться кнопкой '📍 Популярные населенные пункты'"
+                            )
                     
                     keyboard = get_main_keyboard()
                     send_telegram_message(chat_id, response_text, keyboard)
