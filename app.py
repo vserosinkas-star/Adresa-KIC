@@ -324,6 +324,60 @@ def find_all_matches(all_records, search_text):
     
     return unique_matches
 
+def clean_phone_number(phone):
+    """Очищает номер телефона для ссылки tel:"""
+    if not phone:
+        return ""
+    
+    # Убираем все символы, кроме цифр
+    cleaned = re.sub(r'\D', '', phone)
+    
+    # Если номер начинается с 8 и имеет 11 цифр, заменяем 8 на 7
+    if len(cleaned) == 11 and cleaned.startswith('8'):
+        cleaned = '7' + cleaned[1:]
+    
+    # Если номер имеет 10 цифр (без кода страны), добавляем 7
+    elif len(cleaned) == 10:
+        cleaned = '7' + cleaned
+    
+    return cleaned
+
+def format_record(record):
+    """Форматирование записи для отображения с кликабельными ссылками"""
+    do_number, kic_name = extract_kic_info(record['kic'])
+    
+    kic_display = record['kic']
+    if do_number and kic_name:
+        kic_display = f"ДО №{do_number} КИЦ {kic_name}"
+    
+    # Очищаем номер телефона для ссылки
+    phone_cleaned = clean_phone_number(record['phone'])
+    
+    # Формируем HTML-сообщение с кликабельными ссылками
+    html_message = (
+        f"<b>📍 Населенный пункт:</b> {record['locality']} ({record['type']})\n\n"
+        f"<b>🏢 КИЦ:</b> {kic_display}\n"
+        f"<b>📫 Адрес КИЦ:</b> {record['address']}\n\n"
+        f"<b>👤 РКИЦ:</b> {record['fio']}\n"
+    )
+    
+    # Добавляем кликабельный телефон
+    if phone_cleaned and record['phone']:
+        html_message += f"<b>📞 Телефон:</b> <a href=\"tel:{phone_cleaned}\">{record['phone']}</a>\n"
+    elif record['phone']:
+        html_message += f"<b>📞 Телефон:</b> {record['phone']}\n"
+    
+    # Добавляем кликабельный email
+    if record['email']:
+        html_message += f"<b>📧 Email:</b> <a href=\"mailto:{record['email']}\">{record['email']}</a>\n"
+    
+    html_message += (
+        f"\n<b>📊 Источник:</b> Google Sheets\n"
+        f"<i>🔄 Для нового поиска используйте кнопки ниже</i>"
+    )
+    
+    return html_message
+
 def get_main_keyboard():
     """Клавиатура главного меню"""
     return {
@@ -465,23 +519,23 @@ def webhook():
                             example_records.append(record)
                 
                 stats_text = (
-                    f"📊 Статистика базы данных из Google Sheets\n\n"
-                    f"• Всего записей: {real_records}\n"
-                    f"• Уникальных КИЦ: {len(kic_map)}\n"
-                    f"• Источник: Google Sheets\n"
-                    f"• Обновлено: {time.strftime('%H:%M:%S')}\n"
-                    f"• URL таблицы: https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}\n\n"
+                    f"<b>📊 Статистика базы данных из Google Sheets</b>\n\n"
+                    f"• <b>Всего записей:</b> {real_records}\n"
+                    f"• <b>Уникальных КИЦ:</b> {len(kic_map)}\n"
+                    f"• <b>Источник:</b> Google Sheets\n"
+                    f"• <b>Обновлено:</b> {time.strftime('%H:%M:%S')}\n"
+                    f"• <b>URL таблицы:</b> https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}\n\n"
                 )
                 
                 if example_records:
-                    stats_text += "Примеры населенных пунктов:\n"
+                    stats_text += "<b>Примеры населенных пунктов:</b>\n"
                     for record in example_records:
                         stats_text += f"• {record['locality']} ({record['type']})\n"
                 else:
-                    stats_text += "❌ Нет данных. Проверьте доступ к Google Sheets таблице."
+                    stats_text += "❌ <b>Нет данных.</b> Проверьте доступ к Google Sheets таблице."
                 
                 keyboard = get_main_keyboard()
-                send_telegram_message(chat_id, stats_text, keyboard)
+                send_telegram_message(chat_id, stats_text, keyboard, parse_mode='HTML')
             
             else:
                 locality_map, all_records, kic_map = get_data()
@@ -495,10 +549,9 @@ def webhook():
                     
                     if records:
                         if len(records) == 1:
-                            record = records[0]
-                            response_text = format_record(record)
+                            response_text = format_record(records[0])
                         else:
-                            response_text = f"🔍 Найдено {len(records)} записей для КИЦ {kic_code}:\n\n"
+                            response_text = f"<b>🔍 Найдено {len(records)} записей для КИЦ {kic_code}:</b>\n\n"
                             for i, record in enumerate(records, 1):
                                 do_number, kic_name = extract_kic_info(record['kic'])
                                 response_text += f"{i}. {record['locality']} ({record['type']})"
@@ -507,12 +560,12 @@ def webhook():
                                 if kic_name:
                                     response_text += f" КИЦ {kic_name}"
                                 response_text += "\n"
-                            response_text += "\n🔍 Уточните поиск, введя полное название населенного пункта."
+                            response_text += "\n<b>🔍 Уточните поиск, введя полное название населенного пункта.</b>"
                     else:
-                        response_text = f"❌ КИЦ с кодом {kic_code} не найден в Google Sheets."
+                        response_text = f"❌ <b>КИЦ с кодом {kic_code} не найден в Google Sheets.</b>"
                     
                     keyboard = get_main_keyboard()
-                    send_telegram_message(chat_id, response_text, keyboard)
+                    send_telegram_message(chat_id, response_text, keyboard, parse_mode='HTML')
                 
                 else:
                     # Ищем точное совпадение
@@ -529,7 +582,7 @@ def webhook():
                             if len(matches) == 1:
                                 response_text = format_record(matches[0])
                             else:
-                                response_text = f"🔍 Найдено {len(matches)} похожих населенных пунктов в Google Sheets:\n\n"
+                                response_text = f"<b>🔍 Найдено {len(matches)} похожих населенных пунктов в Google Sheets:</b>\n\n"
                                 for i, match in enumerate(matches, 1):
                                     do_number, kic_name = extract_kic_info(match['kic'])
                                     response_text += f"{i}. {match['locality']} ({match['type']})"
@@ -539,22 +592,22 @@ def webhook():
                                         response_text += f" КИЦ {kic_name}"
                                     response_text += "\n"
                                 
-                                response_text += "\n🔍 Введите полное и точное название населенного пункта для получения подробной информации."
+                                response_text += "\n<b>🔍 Введите полное и точное название населенного пункта для получения подробной информации.</b>"
                         else:
                             # Проверяем, есть ли вообще данные в таблице
                             if not all_records:
                                 response_text = (
-                                    f"❌ Нет данных в Google Sheets таблице.\n\n"
-                                    "Проверьте:\n"
+                                    f"❌ <b>Нет данных в Google Sheets таблице.</b>\n\n"
+                                    "<b>Проверьте:</b>\n"
                                     f"1. Доступ к таблице: https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}\n"
                                     "2. Что таблица опубликована для общего доступа\n"
                                     "3. Нажмите '🔄 Обновить данные' для повторной загрузки"
                                 )
                             else:
                                 response_text = (
-                                    f"❌ Населенный пункт «{text}» не найден в Google Sheets.\n\n"
-                                    f"Всего записей в таблице: {len(all_records)}\n"
-                                    "Попробуйте:\n"
+                                    f"❌ <b>Населенный пункт «{text}» не найден в Google Sheets.</b>\n\n"
+                                    f"<b>Всего записей в таблице:</b> {len(all_records)}\n"
+                                    "<b>Попробуйте:</b>\n"
                                     "• Проверить правильность написания\n"
                                     "• Использовать часть названия (например, 'окт' вместо 'октябрьское')\n"
                                     "• Воспользоваться кнопкой '📍 Популярные населенные пункты'\n"
@@ -562,7 +615,7 @@ def webhook():
                                 )
                     
                     keyboard = get_main_keyboard()
-                    send_telegram_message(chat_id, response_text, keyboard)
+                    send_telegram_message(chat_id, response_text, keyboard, parse_mode='HTML')
         
         return jsonify({"status": "ok"})
         
@@ -570,33 +623,15 @@ def webhook():
         logger.error(f"Ошибка в webhook: {str(e)}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
 
-def format_record(record):
-    """Форматирование записи для отображения"""
-    do_number, kic_name = extract_kic_info(record['kic'])
-    
-    kic_display = record['kic']
-    if do_number and kic_name:
-        kic_display = f"ДО №{do_number} КИЦ {kic_name}"
-    
-    return (
-        f"📍 Населенный пункт: {record['locality']} ({record['type']})\n\n"
-        f"🏢 КИЦ: {kic_display}\n"
-        f"📫 Адрес КИЦ: {record['address']}\n\n"
-        f"👤 РКИЦ: {record['fio']}\n"
-        f"📞 Телефон: {record['phone']}\n"
-        f"📧 Email: {record['email']}\n\n"
-        f"📊 Источник: Google Sheets\n"
-        f"🔄 Для нового поиска используйте кнопки ниже"
-    )
-
-def send_telegram_message(chat_id, text, reply_markup=None):
+def send_telegram_message(chat_id, text, reply_markup=None, parse_mode='HTML'):
     """Отправка сообщения в Telegram"""
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         payload = {
             "chat_id": chat_id,
             "text": text,
-            "parse_mode": "HTML"
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": True
         }
         
         if reply_markup:
