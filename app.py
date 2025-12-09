@@ -205,7 +205,7 @@ def process_csv_rows(rows):
     return records
 
 def get_data():
-    """Получение данных с кэшированием ТОЛЬКО из Google Sheets"""
+    """Получение данных с кэшированием ТОЛЬКО из базы знаний"""
     global data_cache, cache_timestamp
     
     current_time = time.time()
@@ -303,7 +303,7 @@ def find_all_matches(all_records, search_text):
     search_lower = search_text.lower()
     matches = []
     
-    # Ищем во ВСЕХ записях из Google Sheets
+    # Ищем во ВСЕХ записях из базы знаний
     for record in all_records:
         # Проверяем, содержит ли название населенного пункта искомый текст
         if search_lower in record['locality'].lower():
@@ -413,7 +413,7 @@ def format_record(record):
         html_message += f'<b>📧 Email:</b> <a href="mailto:{email_clean}">{email_display}</a>\n'
     
     html_message += (
-        f"\n<b>📊 Источник:</b> Google Sheets\n"
+        f"\n<b>📊 Источник:</b> база знаний\n"
         f"<i>🔄 Для нового поиска используйте кнопки ниже</i>"
     )
     
@@ -534,7 +534,7 @@ def webhook():
                     "• 📍 Популярные населенные пункты - быстрый выбор из списка\n"
                     "• 📊 Статистика - информация о базе данных\n"
                     "• 🔄 Обновить данные - обновить данные из базы данных\n\n"
-                    "📝 Данные загружаются из Google Sheets таблицы\n"
+                    "📝 Данные загружаются из базы данных\n"
                     "📊 Формат таблицы: Название | Тип | КИЦ | Адрес | ФИО | Телефон | Email\n\n"
                     "🔍 Примеры поиска:\n"
                     "• При вводе 'Октябрь' найдет все населенные пункты, содержащие это слово\n"
@@ -560,7 +560,7 @@ def webhook():
                             example_records.append(record)
                 
                 stats_text = (
-                    f"<b>📊 Статистика базы данных из Google Sheets</b>\n\n"
+                    f"<b>📊 Статистика базы данных </b>\n\n"
                     f"• <b>Всего записей:</b> {real_records}\n"
                     f"• <b>Уникальных КИЦ:</b> {len(kic_map)}\n"
                     f"• <b>Источник:</b> Google Sheets\n"
@@ -605,7 +605,7 @@ def webhook():
                                 response_text += "\n"
                             response_text += "\n<b>🔍 Уточните поиск, введя полное название населенного пункта.</b>"
                     else:
-                        response_text = f"❌ <b>КИЦ с кодом {html.escape(kic_code)} не найден в Google Sheets.</b>"
+                        response_text = f"❌ <b>КИЦ с кодом {html.escape(kic_code)} не найден в базе знаний.</b>"
                     
                     keyboard = get_main_keyboard()
                     send_telegram_message(chat_id, response_text, keyboard, parse_mode='HTML')
@@ -618,14 +618,14 @@ def webhook():
                     if record:
                         response_text = format_record(record)
                     else:
-                        # Ищем ВСЕ совпадения (включая частичные) В Google Sheets
+                        # Ищем ВСЕ совпадения (включая частичные) В базе знаний
                         matches = find_all_matches(all_records, text)
                         
                         if matches:
                             if len(matches) == 1:
                                 response_text = format_record(matches[0])
                             else:
-                                response_text = f"<b>🔍 Найдено {len(matches)} похожих населенных пунктов в Google Sheets:</b>\n\n"
+                                response_text = f"<b>🔍 Найдено {len(matches)} похожих населенных пунктов в базе знаний:</b>\n\n"
                                 for i, match in enumerate(matches, 1):
                                     do_number, kic_name = extract_kic_info(match['kic'])
                                     locality_escaped = html.escape(match['locality'])
@@ -642,7 +642,7 @@ def webhook():
                             # Проверяем, есть ли вообще данные в таблице
                             if not all_records:
                                 response_text = (
-                                    f"❌ <b>Нет данных в Google Sheets таблице.</b>\n\n"
+                                    f"❌ <b>Нет данных в базе знаний.</b>\n\n"
                                     "<b>Проверьте:</b>\n"
                                     f"1. Доступ к таблице: https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}\n"
                                     "2. Что таблица опубликована для общего доступа\n"
@@ -714,7 +714,7 @@ def debug():
 
 @app.route('/test_sheet')
 def test_sheet():
-    """Тестирование подключения к Google Sheets"""
+    """Тестирование подключения к базе знаний"""
     try:
         response = requests.get(PUBLIC_SHEET_URL, timeout=10)
         return jsonify({
@@ -761,6 +761,6 @@ def refresh_cache():
 if __name__ == '__main__':
     # Предварительная загрузка данных при запуске
     logger.info("Запуск бота...")
-    logger.info(f"Используется Google Sheets ID: {GOOGLE_SHEET_ID}")
+    logger.info(f"Используется база знаний ID: {GOOGLE_SHEET_ID}")
     get_data()
     app.run(host='0.0.0.0', port=3000, debug=False)
